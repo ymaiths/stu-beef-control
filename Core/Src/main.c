@@ -64,7 +64,8 @@ uint16_t GoalPlace[5];
 uint16_t Goal;
 int j = 0;
 uint8_t a;
-uint8_t b;
+int b;
+uint32_t timestampglob;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -156,6 +157,13 @@ int main(void)
 	registerFrame[0x13].U16 =Z[2];
 	registerFrame[0x40].U16 =Z[3];
 
+	static uint32_t timestamp = 0;
+	timestampglob = timestamp;
+	b = HAL_GetTick();
+
+	if (registerFrame[0x10].U16 == 1 && HAL_GetTick() >= timestamp){
+		registerFrame[0x10].U16 = 0;
+	}
 
 	//Set Shelves
 	if (registerFrame[0x01].U16 == 1){
@@ -166,13 +174,7 @@ int main(void)
 		registerFrame[0x25].U16 = ShelvePos[2];
 		registerFrame[0x26].U16 = ShelvePos[3];
 		registerFrame[0x27].U16 = ShelvePos[4];
-		a = 0;
-	}
-	if (a == 2){
-		registerFrame[0x10].U16 = 0;
-	}
-	if (registerFrame[0x10].U16 = 1){
-		a += 1;
+		timestamp = HAL_GetTick()+2000;
 	}
 
 
@@ -202,7 +204,7 @@ int main(void)
 		Goal = registerFrame[48].U16;
 	}
 
-	if(Z[0] == Goal && registerFrame[0x10].U16 != 4 && registerFrame[0x10].U16 != 8){
+	if(Z[0] == Goal && registerFrame[0x10].U16 != 4 && registerFrame[0x10].U16 != 8 && registerFrame[0x10].U16 != 1){
 		registerFrame[0x10].U16 = 0;
 	}
 /////////////////START JOG////////////////////////////////////////////////////////////
@@ -477,8 +479,9 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+uint32_t dalay_timestamp(){
 
-
+}
 
 void convert_to_string(uint16_t number, char* buffer, int buffer_size) {
   if (buffer_size < 6) { // Ensure buffer size is at least 6 (for 5 digits + null terminator)
