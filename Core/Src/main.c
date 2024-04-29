@@ -57,13 +57,14 @@ uint16_t HomePos = 10;
 uint16_t Z[4];	//Z[] = ZPos ZSpeed ZAccel XPos
 uint8_t Vacuum;
 uint8_t Gripper;
-char* PickOrder;
-char* PlaceOrder;
+char PickOrder[6];
+char PlaceOrder[6];
 uint16_t GoalPick[5];
 uint16_t GoalPlace[5];
 uint16_t Goal;
 int j = 0;
-uint8_t PStatue;
+uint8_t a;
+uint8_t b;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -77,7 +78,7 @@ static void MX_TIM5_Init(void);
 void HomeGoTo();
 void JogModeGoTo();
 void PointModeGoTo();
-char* convert_to_string(uint16_t number);
+void convert_to_string(uint16_t number, char* buffer, int buffer_size);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -165,8 +166,15 @@ int main(void)
 		registerFrame[0x25].U16 = ShelvePos[2];
 		registerFrame[0x26].U16 = ShelvePos[3];
 		registerFrame[0x27].U16 = ShelvePos[4];
+		a = 0;
+	}
+	if (a == 2){
 		registerFrame[0x10].U16 = 0;
 	}
+	if (registerFrame[0x10].U16 = 1){
+		a += 1;
+	}
+
 
 	//Set Home
 	if(registerFrame[0x01].U16 == 2){
@@ -177,11 +185,14 @@ int main(void)
 
 	//Run Jog Mode
 	if(registerFrame[0x01].U16 == 4){
-		PickOrder = convert_to_string(registerFrame[0x21].U16);
-		PlaceOrder = convert_to_string(registerFrame[0x22].U16);
-
+		convert_to_string(registerFrame[0x21].U16, PickOrder, sizeof(PickOrder));
+		convert_to_string(registerFrame[0x22].U16, PlaceOrder, sizeof(PlaceOrder));
 		registerFrame[0x01].U16 = 0;
-		JogModeGoTo();
+		registerFrame[0x10].U16 = 4;
+		for(int i = 0;i<=4;i++){
+			GoalPick[i] = ShelvePos[PickOrder[4-i]-'0'-1];
+			GoalPlace[i] = ShelvePos[PlaceOrder[4-i]-'0'-1];
+			}
 	}
 
 	//Run Point Mode
@@ -191,31 +202,38 @@ int main(void)
 		Goal = registerFrame[48].U16;
 	}
 
-	if(Z[0] == Goal && registerFrame[0x10].U16 != 4){
+	if(Z[0] == Goal && registerFrame[0x10].U16 != 4 && registerFrame[0x10].U16 != 8){
 		registerFrame[0x10].U16 = 0;
 	}
-
-	if(registerFrame[0x10].U16 == 4){
-
-		if (j < 5 && PStatue == 1){
+/////////////////START JOG////////////////////////////////////////////////////////////
+	if(registerFrame[0x10].U16 == 4 && j < 5){
+		a=0;
+		if(registerFrame[3].U16 == 0){//Gripper BW before move
 			Goal = GoalPick[j];
-			if(Z[0] == Goal && Gripper == 1 && Vacuum == 1){
-				PStatue = 2;
-			}
-		}else if(j < 5 && PStatue == 2){
-			if(Gripper == 0){
-				Goal = GoalPlace[j];
-			}
-			if(Z[0] == Goal && Gripper == 1 && Vacuum == 0){
-				PStatue = 1;
-				j += 1;
+			a = 1;
+		}  //Gripper FW Vacuum On
+		if(Z[0] == Goal && registerFrame[3].U16 == 1 && registerFrame[2].U16 == 1){
+			registerFrame[0x10].U16 = 8;
+			a = 2;
+		}}
+	if(registerFrame[0x10].U16 == 8 && j < 5){
+			a = 3;
+		if(registerFrame[3].U16 == 0){//Gripper BW before move
+			Goal = GoalPlace[j];
+			a = 4;
+		}//Gripper FW Vacuum Off
+		if(Z[0] == Goal && registerFrame[3].U16 == 1 && registerFrame[2].U16 == 0){
+			registerFrame[0x10].U16 = 4;
+			j += 1;
+			a = 5;
 			}
 		}
-
-		if(j==5){
-			registerFrame[0x10].U16 = 0;
-		}
+	if(j==5){
+		registerFrame[0x10].U16 = 0;
+		j = 0;
+		a = 6;
 	}
+/////////////////END JOG///////////////////////////////////////////////////////////
 
 
   }
@@ -460,29 +478,20 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-void JogModeGoTo(){
-	registerFrame[0x10].U16 = 4; //Pick
-	registerFrame[0x10].U16 = 8; //Place
-	for(int i = 0;i<=4;i++){
-		GoalPick[i] = ShelvePos[PickOrder[4-i]-'0'-1];
-		GoalPlace[i] = ShelvePos[PlaceOrder[4-i]-'0'-1];
-		}
-}
 
 
-char* convert_to_string(uint16_t number) {
-  char buffer[10]; // Static array for persistence (avoid stack overflow)
+void convert_to_string(uint16_t number, char* buffer, int buffer_size) {
+  if (buffer_size < 6) { // Ensure buffer size is at least 6 (for 5 digits + null terminator)
+    return; // Handle error (insufficient buffer size)
+  }
+
   int index = 0;
-
   do {
     uint8_t digit = number % 10;
-    buffer[index++] = digit + '0'; // Convert digit to character
+    buffer[index++] = digit + '0';
     number /= 10;
   } while (number > 0);
-
-  buffer[index] = '\0'; // Add null terminator
-
-  return buffer; // Return the pointer to the string (be cautious with memory management)
+  buffer[index] = '\0';
 }
 
 
