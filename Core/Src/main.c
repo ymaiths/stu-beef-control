@@ -55,8 +55,10 @@ uint16_t ShelvePos[5];
 uint16_t HomePos = 10;
 
 uint16_t Z[4];	//Z[] = ZPos ZSpeed ZAccel XPos
-uint8_t Vacuum;
-uint8_t Gripper;
+uint8_t BaseVacuum;
+uint8_t BaseGripper;
+uint8_t ActualVacuum;
+uint8_t ActualGripper;
 char PickOrder[6];
 char PlaceOrder[6];
 uint16_t GoalPick[5];
@@ -64,8 +66,6 @@ uint16_t GoalPlace[5];
 uint16_t Goal;
 int j = 0;
 uint8_t a;
-int b;
-uint32_t timestampglob;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -145,21 +145,19 @@ int main(void)
 	ShelvePos[3] = 4;
 	ShelvePos[4] = 5;
 
-//	Z[0] = 1;  //ZPos
-//	Z[1] = 2;  //ZSpeed
-//	Z[2] = 3;  //ZAccel
-//	Z[3] = 4;  //XPos
+//	Z[0] = 1;
+//	Z[1] = 2;
+//	Z[2] = 3;
+//	Z[3] = 4;
 
-	Vacuum = registerFrame[2].U16; // 0 = off , 1 = on
-	Gripper = registerFrame[3].U16; // 0 = Backward , 1 = Forward
-	registerFrame[0x11].U16 =Z[0];
-	registerFrame[0x12].U16 =Z[1];
-	registerFrame[0x13].U16 =Z[2];
-	registerFrame[0x40].U16 =Z[3];
+	BaseVacuum = registerFrame[2].U16; // 0 = off , 1 = on
+	BaseGripper = registerFrame[3].U16; // 0 = Backward , 1 = Forward
+	registerFrame[0x11].U16 =Z[0]; //ZPos
+	registerFrame[0x12].U16 =Z[1]; //ZSpeed
+	registerFrame[0x13].U16 =Z[2]; //ZAccel
+	registerFrame[0x40].U16 =Z[3]; //XPos
 
 	static uint32_t timestamp = 0;
-	timestampglob = timestamp;
-	b = HAL_GetTick();
 
 	if (registerFrame[0x10].U16 == 1 && HAL_GetTick() >= timestamp){
 		registerFrame[0x10].U16 = 0;
@@ -182,7 +180,16 @@ int main(void)
 	if(registerFrame[0x01].U16 == 2){
 		registerFrame[0x01].U16 = 0;
 		registerFrame[0x10].U16 = 2;
-		Goal = HomePos;
+		//Run To limit switch
+
+		if(LimitBottom == 1){
+			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+			HomePos = QEIdata.TotalPos;
+		}else{
+			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //End effector Go Down
+		}
+
 	}
 
 	//Run Jog Mode
@@ -201,7 +208,7 @@ int main(void)
 	if(registerFrame[0x01].U16 == 8){
 		registerFrame[0x01].U16 = 0;
 		registerFrame[0x10].U16 = 16;
-		Goal = registerFrame[48].U16;
+		Goal = registerFrame[48].U16+HomePos;
 	}
 
 	if(Z[0] == Goal && registerFrame[0x10].U16 != 4 && registerFrame[0x10].U16 != 8 && registerFrame[0x10].U16 != 1){
@@ -210,21 +217,20 @@ int main(void)
 /////////////////START JOG////////////////////////////////////////////////////////////
 	if(registerFrame[0x10].U16 == 4 && j < 5){
 		a=0;
-		if(registerFrame[3].U16 == 0){//Gripper BW before move
-			Goal = GoalPick[j];
-			a = 1;
+			Goal = GoalPick[j]+HomePos;
 		}  //Gripper FW Vacuum On
-		if(Z[0] == Goal && registerFrame[3].U16 == 1 && registerFrame[2].U16 == 1){
+		if(Z[0] == Goal && ActualGripper == 1 && ActualVacuum == 1){
 			registerFrame[0x10].U16 = 8;
 			a = 2;
-		}}
+		}
+
 	if(registerFrame[0x10].U16 == 8 && j < 5){
 			a = 3;
-		if(registerFrame[3].U16 == 0){//Gripper BW before move
-			Goal = GoalPlace[j];
+		if(ActualGripper == 0){//Gripper BW before move
+			Goal = GoalPlace[j]+HomePos;
 			a = 4;
 		}//Gripper FW Vacuum Off
-		if(Z[0] == Goal && registerFrame[3].U16 == 1 && registerFrame[2].U16 == 0){
+		if(Z[0] == Goal && ActualGripper == 1 && ActualVacuum == 0){
 			registerFrame[0x10].U16 = 4;
 			j += 1;
 			a = 5;
@@ -238,9 +244,9 @@ int main(void)
 /////////////////END JOG///////////////////////////////////////////////////////////
 
 
-  }
+  }}
   /* USER CODE END 3 */
-}
+
 
 /**
   * @brief System Clock Configuration
@@ -505,7 +511,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	{
 		registerFrame[0].U16 = 22881;
 
-		//registerFrame[10].U16 =
 		}
 }
 /* USER CODE END 4 */
