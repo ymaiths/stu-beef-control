@@ -65,6 +65,8 @@ uint16_t GoalPick[5];
 uint16_t GoalPlace[5];
 uint16_t Goal;
 int j = 0;
+uint8_t Arrived = 0;
+uint8_t i;
 uint8_t a;
 /* USER CODE END PV */
 
@@ -139,11 +141,11 @@ int main(void)
     /* USER CODE BEGIN 3 */
 	Modbus_Protocal_Worker();
 
-	ShelvePos[0] = 1;
-	ShelvePos[1] = 2;
-	ShelvePos[2] = 3;
-	ShelvePos[3] = 4;
-	ShelvePos[4] = 5;
+//	ShelvePos[0] = 1;
+//	ShelvePos[1] = 2;
+//	ShelvePos[2] = 3;
+//	ShelvePos[3] = 4;
+//	ShelvePos[4] = 5;
 
 //	Z[0] = 1;
 //	Z[1] = 2;
@@ -167,14 +169,31 @@ int main(void)
 	if (registerFrame[0x01].U16 == 1){
 		registerFrame[0x01].U16 = 0;
 		registerFrame[0x10].U16 = 1;
+	}
+
+	if(registerFrame[0x10].U16 == 1){
+		if (bt3 == 0) {
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1);
+			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
+		} else if (bt2 == 0) {
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
+			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
+		} else if (bt1 == 0){
+			ShelvePos[i] = QEI.TotalPos;
+			if(bt1==1){
+				i += 1;
+			}
+		} else if(bt4==0 || i > 4){
+			i = 0;
+			registerFrame[0x10].U16 = 0;
+		}
 		registerFrame[0x23].U16 = ShelvePos[0];
 		registerFrame[0x24].U16 = ShelvePos[1];
 		registerFrame[0x25].U16 = ShelvePos[2];
 		registerFrame[0x26].U16 = ShelvePos[3];
 		registerFrame[0x27].U16 = ShelvePos[4];
-		timestamp = HAL_GetTick()+2000;
+		//timestamp = HAL_GetTick()+2000;
 	}
-
 
 	//Set Home
 	if(registerFrame[0x01].U16 == 2){
@@ -185,12 +204,23 @@ int main(void)
 		if(LimitBottom == 1){
 			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 			HomePos = QEIdata.TotalPos;
+			registerFrame[0x10].U16 = 0;
 		}else{
 			__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
 			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //End effector Go Down
 		}
-
 	}
+
+	//Run Point Mode
+		if(registerFrame[0x01].U16 == 8){
+			registerFrame[0x01].U16 = 0;
+			registerFrame[0x10].U16 = 16;
+			Goal = registerFrame[48].U16+HomePos;
+		}
+
+		if(Arrived == 1 && registerFrame[0x10].U16 == 16){
+			registerFrame[0x10].U16 = 0;
+		}
 
 	//Run Jog Mode
 	if(registerFrame[0x01].U16 == 4){
@@ -203,23 +233,12 @@ int main(void)
 			GoalPlace[i] = ShelvePos[PlaceOrder[4-i]-'0'-1];
 			}
 	}
-
-	//Run Point Mode
-	if(registerFrame[0x01].U16 == 8){
-		registerFrame[0x01].U16 = 0;
-		registerFrame[0x10].U16 = 16;
-		Goal = registerFrame[48].U16+HomePos;
-	}
-
-	if(Z[0] == Goal && registerFrame[0x10].U16 != 4 && registerFrame[0x10].U16 != 8 && registerFrame[0x10].U16 != 1){
-		registerFrame[0x10].U16 = 0;
-	}
 /////////////////START JOG////////////////////////////////////////////////////////////
 	if(registerFrame[0x10].U16 == 4 && j < 5){
 		a=0;
-			Goal = GoalPick[j]+HomePos;
+			Goal = GoalPick[j];
 		}  //Gripper FW Vacuum On
-		if(Z[0] == Goal && ActualGripper == 1 && ActualVacuum == 1){
+		if(Arrived == 1 && ActualGripper == 1 && ActualVacuum == 1){
 			registerFrame[0x10].U16 = 8;
 			a = 2;
 		}
@@ -227,10 +246,10 @@ int main(void)
 	if(registerFrame[0x10].U16 == 8 && j < 5){
 			a = 3;
 		if(ActualGripper == 0){//Gripper BW before move
-			Goal = GoalPlace[j]+HomePos;
+			Goal = GoalPlace[j];
 			a = 4;
 		}//Gripper FW Vacuum Off
-		if(Z[0] == Goal && ActualGripper == 1 && ActualVacuum == 0){
+		if(Arrived == 1 && ActualGripper == 1 && ActualVacuum == 0){
 			registerFrame[0x10].U16 = 4;
 			j += 1;
 			a = 5;
@@ -244,9 +263,9 @@ int main(void)
 /////////////////END JOG///////////////////////////////////////////////////////////
 
 
-  }}
+  }
   /* USER CODE END 3 */
-
+}
 
 /**
   * @brief System Clock Configuration
