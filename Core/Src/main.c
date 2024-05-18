@@ -72,7 +72,7 @@ uint8_t relay[4];
 
 uint32_t QEIReadRaw;
 float velodegree;
-
+float CurrentPos;
 typedef struct {
 // for record New / Old value to calculate dx / dt
 	uint32_t Position[2];
@@ -107,6 +107,7 @@ uint8_t bt2 = 0;
 uint8_t bt3 = 0;
 uint8_t bt4 = 0;
 uint8_t bt5 = 0;
+uint8_t bt5prev = 0;
 
 //Limit
 uint8_t LimitTop = 0;
@@ -133,7 +134,7 @@ ModbusHandleTypedef hmodbus;
 u16u8_t registerFrame[200];
 
 uint16_t ShelvePos[5];
-uint16_t HomePos;
+float HomePos = 0;
 
 uint16_t Z[4];	//Z[] = ZPos ZSpeed ZAccel XPos
 uint8_t BaseVacuum;
@@ -148,6 +149,7 @@ int j = 0;
 uint8_t Arrived = 0;
 uint8_t i;
 uint8_t a;
+uint8_t b_check[10];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -270,17 +272,6 @@ int main(void)
 	ReadLogicConv();
 	ReadLimit();
 
-	//Set Home
-	if(registerFrame[0x01].U16 == 2){
-		registerFrame[0x01].U16 = 0;
-		registerFrame[0x10].U16 = 2;
-	}
-	//Set Shelves
-	if (registerFrame[0x01].U16 == 1){
-		registerFrame[0x01].U16 = 0;
-		registerFrame[0x10].U16 = 1;
-	}
-
 	if (mode == 1) { //joy
 			if (bt3 == 0) {
 				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1);
@@ -292,6 +283,19 @@ int main(void)
 				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 			}
 		} else if (mode == 2) {
+
+			//Set Home
+			if(registerFrame[0x01].U16 == 2){
+				registerFrame[0x01].U16 = 0;
+				registerFrame[0x10].U16 = 2;
+			}
+			//Set Shelves
+			if (registerFrame[0x01].U16 == 1){
+				registerFrame[0x01].U16 = 0;
+				registerFrame[0x10].U16 = 1;
+			}
+
+			b_check[0] = 1;
 			//if(bt3 == 0){
 				//Goal = 600;
 			//}
@@ -299,20 +303,26 @@ int main(void)
 			//Set Shelves
 			if(registerFrame[0x10].U16 == 1){
 				if (bt3 == 0) {
-					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //Go Up
+					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //Go Down
 					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
 				} else if (bt2 == 0) {
-					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0); //Go Down
+					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0); //Go Up
 					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
-				} else if (bt1 == 0){
-					ShelvePos[i] = QEIdata.TotalPos;
-					if(bt1==1){
-						i += 1;
-					}
-				} else if(bt4==0 || i > 4){
+				} else if(bt3 ==1 && bt2==1){
+					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+				}
+
+				if(bt5prev == 1 && bt5 == 0){
+					ShelvePos[i] = QEIdata.TotalPos+HomePos;
+					i+=1;
+				}
+				if(i > 4){
 					i = 0;
 					registerFrame[0x10].U16 = 0;
 				}
+
+
+				bt5prev = bt5;
 				registerFrame[0x23].U16 = ShelvePos[0];
 				registerFrame[0x24].U16 = ShelvePos[1];
 				registerFrame[0x25].U16 = ShelvePos[2];
@@ -324,17 +334,15 @@ int main(void)
 
 			//Set Home Run To limit switch
 			if(registerFrame[0x10].U16 == 2){
-				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
-				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //End effector Go Down
+				b_check[0] = 2;
 
-				if(LimitBottom == 1){
-					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-					HomePos = QEIdata.TotalPos;
-					registerFrame[0x10].U16 = 0;
-				}else{
-					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
-					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //End effector Go Down
-				}
+				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500);
+				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //End effector Go Down
+//				if(LimitBottom = 0){
+//					b_check[1] = 1;
+//
+//				}
+				//}
 			}
 
 			//Run Point Mode
@@ -364,13 +372,13 @@ int main(void)
 				a=0;
 					Goal = GoalPick[j];
 					MotorDrive();
-				}  //Gripper FW Vacuum On
+				  //Gripper FW Vacuum On
 				if(Arrived == 1 && ActualGripper == 1 && ActualVacuum == 1){
 					registerFrame[0x10].U16 = 8;
 					a = 2;
 				}
 
-			if(registerFrame[0x10].U16 == 8 && j < 5){
+			}else if(registerFrame[0x10].U16 == 8 && j < 5){
 					a = 3;
 				if(ActualGripper == 0){//Gripper BW before move
 					Goal = GoalPlace[j];
@@ -382,8 +390,7 @@ int main(void)
 					j += 1;
 					a = 5;
 					}
-				}
-			if(j==5){
+			}else if(j==5){
 				registerFrame[0x10].U16 = 0;
 				j = 0;
 				a = 6;
@@ -830,11 +837,11 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1|GPIO_PIN_2|Relay4_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : B1_Pin PC7 */
-  GPIO_InitStruct.Pin = B1_Pin|GPIO_PIN_7;
+  /*Configure GPIO pin : B1_Pin */
+  GPIO_InitStruct.Pin = B1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PC1 PC3 */
   GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_3;
@@ -871,6 +878,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
+  /*Configure GPIO pin : PC7 */
+  GPIO_InitStruct.Pin = GPIO_PIN_7;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
   /*Configure GPIO pins : PC8 PC9 */
   GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
@@ -897,14 +910,28 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_GPIO_EXTI_Callback (uint16_t GPIO_Pin)
 {
-	if(GPIO_Pin == GPIO_PIN_6){ //limitTop
+	if(GPIO_Pin == GPIO_PIN_7){ //limitBottom
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 		HomePos = QEIdata.TotalPos;
 		registerFrame[0x10].U16 = 0;
+
+
 	}
-	if(GPIO_Pin == GPIO_PIN_7){
+	if(GPIO_Pin == GPIO_PIN_6){
 		mode = 1;
 
+	}
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	if(htim == &htim4)
+	{
+		registerFrame[0].U16 = 22881;
+	}
+	if (htim == &htim5) {
+		upper += 1;
+		HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
 	}
 }
 
@@ -924,17 +951,7 @@ void convert_to_string(uint16_t number, char* buffer, int buffer_size) {
 
 
 
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-	if(htim == &htim4)
-	{
-		registerFrame[0].U16 = 22881;
-	}
-	if (htim == &htim5) {
-		upper += 1;
-		HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-	}
-}
+
 
 
 uint64_t Micros() {
@@ -947,6 +964,7 @@ uint64_t Micros() {
 }
 
 void QEIEncoderPosVel_Update() {
+	CurrentPos = QEIdata.TotalPos-HomePos;
 	//collect data
 	QEIdata.TimeStamp[NEW] = Micros();
 	QEIdata.Position[NEW] = __HAL_TIM_GET_COUNTER(&htim3);
@@ -1000,8 +1018,8 @@ void ReadButton() {
 }
 
 void ReadLimit() {
-	LimitTop = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_7); // LimitTop
-	LimitBottom = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6); // LimitBottom
+	LimitBottom = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_7); // LimitTop
+	LimitTop = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6); // LimitBottom
 
 }
 
