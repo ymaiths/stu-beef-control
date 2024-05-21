@@ -64,7 +64,7 @@ List to test
 -set shelve
 */
 
-uint16_t timerange = 200;
+uint16_t timerange = 2;
 uint64_t upper = 0;
 uint64_t read = 0;
 float linearspeed = 0;
@@ -153,6 +153,10 @@ uint8_t a;
 uint8_t b_check[10];
 uint8_t MotorDriveFlag = 0;
 float MotorDriveDampDistance = 0;
+float MotorDriveTravelDistance;
+float StartTotalPos;
+//flag
+uint8_t LimitBottomFlag=0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -255,12 +259,24 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 	Modbus_Protocal_Worker();
-	registerFrame[0x11].U16 = CurrentPos*10; //ZPos
+	registerFrame[0x11].U16 = QEIdata.TotalPos*10; //ZPos
 	registerFrame[0x12].U16 =Z[1]; //ZSpeed
 	registerFrame[0x13].U16 =Z[2]; //ZAccel
 	registerFrame[0x40].U16 =Z[3]; //XPos
 	BaseVacuum = registerFrame[2].U16; // 0 = off , 1 = on
 	BaseGripper = registerFrame[3].U16; // 0 = Backward , 1 = Forward
+
+	//re counter
+	if (LimitBottomFlag == 1) {
+		NVIC_SystemReset();
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+		HomePos = QEIdata.TotalPos;
+		registerFrame[0x10].U16 = 0;
+		b_check[8] = 1;
+		__HAL_TIM_SET_COUNTER(&htim3,0);
+	}else if (__HAL_TIM_GET_COUNTER(&htim3) == 0){
+		LimitBottomFlag = 0;
+	}
 
 	static uint64_t timestamp = 0;
 	int64_t currentTime = Micros();
@@ -280,7 +296,7 @@ int main(void)
 		MotorDrive();
 	}
 
-	if (mode == 1) { //joy
+	if (Lo3 == 1 && mode !=0) { //joy manual
 			if (bt1 == 0) {
 				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1);
 				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
@@ -290,7 +306,8 @@ int main(void)
 			} else {
 				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 			}
-		} else if (mode == 2) {
+		} else if (Lo3 == 0 && mode!=0) {
+
 
 			//Set Home
 			if(registerFrame[0x01].U16 == 2){
@@ -321,7 +338,7 @@ int main(void)
 				}
 
 				if(bt5prev == 1 && bt5 == 0){
-					ShelvePos[i] = CurrentPos;
+					ShelvePos[i] = QEIdata.TotalPos;
 					i+=1;
 				}
 				if(i > 4){
@@ -601,11 +618,11 @@ static void MX_TIM3_Init(void)
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC1Filter = 0;
+  sConfig.IC1Filter = 3;
   sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC2Filter = 0;
+  sConfig.IC2Filter = 3;
   if (HAL_TIM_Encoder_Init(&htim3, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -885,7 +902,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : PC7 */
   GPIO_InitStruct.Pin = GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING_FALLING;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
@@ -916,16 +933,12 @@ static void MX_GPIO_Init(void)
 void HAL_GPIO_EXTI_Callback (uint16_t GPIO_Pin)
 {
 	if(GPIO_Pin == GPIO_PIN_7){ //limitBottom
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-		HomePos = QEIdata.TotalPos;
-		registerFrame[0x10].U16 = 0;
-
-
+		LimitBottomFlag = 1;
 	}
+
 	if(GPIO_Pin == GPIO_PIN_6){
 		mode = 1;
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-
 	}
 }
 
@@ -983,10 +996,11 @@ uint64_t Micros() {
 }
 
 void QEIEncoderPosVel_Update() {
-	CurrentPos = QEIdata.TotalPos-HomePos;
+	//CurrentPos = QEIdata.TotalPos-HomePos;
 	//collect data
 	QEIdata.TimeStamp[NEW] = Micros();
 	QEIdata.Position[NEW] = __HAL_TIM_GET_COUNTER(&htim3);
+
 	//Position 1 turn calculation
 	QEIdata.QEIPostion_1turn[NEW] = QEIdata.Position[NEW] % 800;
 	QEIdata.Angle = QEIdata.QEIPostion_1turn[NEW] * 360 / 800;
@@ -1045,46 +1059,85 @@ void ReadLimit() {
 void MotorDrive() {
 	if (MotorDriveFlag == 0) {
 		// Start: This box of code run only one time.
-		MotorDriveDampDistance = fabs(Goal - CurrentPos) * 0.35;
+		StartTotalPos = QEIdata.TotalPos;
+		MotorDriveTravelDistance = Goal - QEIdata.TotalPos;
+		MotorDriveDampDistance =  MotorDriveTravelDistance * 0.3;
 		// End
 		MotorDriveFlag = 1;
 	}
 
-	if((Goal-CurrentPos) > 0.2 || (Goal-CurrentPos) < -0.2){
+	if((Goal-QEIdata.TotalPos) > 0.2 || (Goal-QEIdata.TotalPos) < -0.2){
 		Arrived = 0;
 
-		Vfeedback = Update_pid(&pid_control, Goal-CurrentPos, 8, 10);
-
-		if(fabs(Goal-CurrentPos) > Goal-MotorDriveDampDistance){ //stop
-			RealVfeedback = Vfeedback*0.4;
-			b_check[6]= 1;
-		}else if(fabs(Goal-CurrentPos) < MotorDriveDampDistance){  //start
-			RealVfeedback = fabs(Goal-CurrentPos)*6/(Goal-MotorDriveDampDistance);
-			b_check[6]= 2;
-		}else{
-			RealVfeedback = Vfeedback;
-			b_check[6]= 3;
+		float PosNow = QEIdata.TotalPos - StartTotalPos;
+		int8_t DriveDirection = 1; // direction is 1 if up, -1 if down.
+		if (Goal <= StartTotalPos) {
+			DriveDirection = -1;
 		}
 
-		//uint8_t VfeedbackLimit = ((Goal-CurrentPos)*4/MotorDriveDampDistance);
+		if(DriveDirection == -1){
+			if ((PosNow <= MotorDriveDampDistance) && (PosNow >= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
+				RealVfeedback = 5;
+				b_check[6]= 1;
+			} else if (PosNow > MotorDriveDampDistance) { // Start
+				RealVfeedback = 2;
+				b_check[6]= 2;
+			} else if (PosNow < MotorDriveTravelDistance) {  //Hard Stop
+				RealVfeedback = 0;
+				b_check[6]= 3;
+			} else if (PosNow < MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop
+				RealVfeedback = 1.5;
+				b_check[6]= 4;
+			}
+		}
+		if(DriveDirection == 1){
+			if ((PosNow >= MotorDriveDampDistance) && (PosNow <= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
+				RealVfeedback = 5;
+				b_check[6]= 5;
+			} else if (PosNow < MotorDriveDampDistance) { // Start
+				RealVfeedback = 2;
+				b_check[6]= 6;
+			} else if (PosNow > MotorDriveTravelDistance) {  //Hard Stop
+				RealVfeedback = 0;
+				b_check[6]= 7;
+			} else if (PosNow > MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop
+				RealVfeedback = 1.5;
+				b_check[6]= 8;
+			}
+		}
 
-//		if (Vfeedback > VfeedbackLimit) {
-//			b_check[6] = 5;
-//			Vfeedback = VfeedbackLimit;
+		RealVfeedback = RealVfeedback * DriveDirection;
+		//Vfeedback = Update_pid(&pid_control, Goal-QEIdata.TotalPos, 8, 10);
+//		if((fabs(Goal-QEIdata.TotalPos) <= Goal-MotorDriveDampDistance) && (fabs(Goal-QEIdata.TotalPos) >= MotorDriveDampDistance)){
+//			RealVfeedback = 5;
+//			b_check[6]= 3;
+//		}else if(fabs(Goal-QEIdata.TotalPos) > fabs(MotorDriveTravelDistance)){
+//			RealVfeedback = 0;
+//			//__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+//			b_check[6]= 4;
+//		}else if(fabs(Goal-QEIdata.TotalPos) <= fabs(MotorDriveDampDistance)){ //start
+//			//RealVfeedback = Vfeedback*0.4;
+//			RealVfeedback = fabs(QEIdata.TotalPos-StartTotalPos+2)*4/(MotorDriveTravelDistance);
+//			b_check[6]= 1;
+//		}else if(fabs(Goal-QEIdata.TotalPos) >= fabs(StartTotalPos+Goal-MotorDriveDampDistance) ){  //stop
+//			RealVfeedback = (Goal-QEIdata.TotalPos)*4/(MotorDriveTravelDistance);
+//			b_check[6]= 2;
 //		}
-//
-		if(fabs(RealVfeedback) < 3.3 && Vfeedback != 0 &&RealVfeedback!=0){
-			RealVfeedback = 3.3;
-			b_check[7] = 1;
-		}
+
+
 
 		if (RealVfeedback > 0) {  //go up
 			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
-			b_check[6]= 4;
+			b_check[9]= 4;
 		} else {  //go down
 			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1);
 			RealVfeedback = RealVfeedback * (-1);
-			b_check[6]= 5;
+			b_check[9]= 5;
+		}
+
+		if(fabs(RealVfeedback) < 1.5  && RealVfeedback!=0){
+			RealVfeedback = 1.5;
+			b_check[7] = 1;
 		}
 
 		duty_cycle_pid = RealVfeedback * 4000 / 12;
@@ -1092,12 +1145,14 @@ void MotorDrive() {
 			duty_cycle_pid = 0;
 		}
 
-
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle_pid);
+		b_check[1] =2;
 	}else{
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 		Arrived = 1;
-		b_check[6] = 4;
+		RealVfeedback = 0;
+		b_check[6] = 6;
+		b_check[8] = 0;
 	}
 }
 
