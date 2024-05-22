@@ -150,7 +150,7 @@ int j = 0;
 uint8_t Arrived = 0;
 uint8_t i;
 uint8_t a;
-uint8_t b_check[10];
+float b_check[10];
 uint8_t MotorDriveFlag = 0;
 float MotorDriveDampDistance = 0;
 float MotorDriveTravelDistance;
@@ -268,14 +268,16 @@ int main(void)
 
 	//re counter
 	if (LimitBottomFlag == 1) {
-		NVIC_SystemReset();
+
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-		HomePos = QEIdata.TotalPos;
+		memset(&QEIdata, 0, sizeof(QEIdata));
+
 		registerFrame[0x10].U16 = 0;
 		b_check[8] = 1;
 		__HAL_TIM_SET_COUNTER(&htim3,0);
-	}else if (__HAL_TIM_GET_COUNTER(&htim3) == 0){
 		LimitBottomFlag = 0;
+		HAL_Delay(10);
+
 	}
 
 	static uint64_t timestamp = 0;
@@ -291,7 +293,6 @@ int main(void)
 	RelayDrive();
 	ReadButton();
 	ReadLogicConv();
-	ReadLimit();
 	if (mode == 0){
 		MotorDrive();
 	}
@@ -321,9 +322,6 @@ int main(void)
 			}
 
 			b_check[0] = 1;
-			//if(bt3 == 0){
-				//Goal = 600;
-			//}
 
 			//Set Shelves
 			if(registerFrame[0x10].U16 == 1){
@@ -337,9 +335,17 @@ int main(void)
 					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 				}
 
-				if(bt5prev == 1 && bt5 == 0){
-					ShelvePos[i] = QEIdata.TotalPos;
-					i+=1;
+				static uint8_t flagbt5 = 0;
+				if(bt5 == 0){
+					static uint64_t timestampbt5 = 0;
+					if(HAL_GetTick() > timestampbt5 && flagbt5 == 0){
+						timestampbt5 = HAL_GetTick() + 1000;
+						ShelvePos[i] = QEIdata.TotalPos;
+						i+=1;
+						flagbt5 = 1;
+					}
+				} else{
+					flagbt5 = 0;
 				}
 				if(i > 4){
 					i = 0;
@@ -940,6 +946,7 @@ void HAL_GPIO_EXTI_Callback (uint16_t GPIO_Pin)
 		mode = 1;
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 	}
+
 }
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
@@ -955,8 +962,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 }
 
 void convert_to_string(uint16_t number, char* buffer, int buffer_size) {
-  if (buffer_size < 6) { // Ensure buffer size is at least 6 (for 5 digits + null terminator)
-    return; // Handle error (insufficient buffer size)
+  if (buffer_size < 6) { // Ensure buffer size is at least 6 (for 5 digits + null terminator)    return; // Handle error (insufficient buffer size)
   }
 
   int index = 0;
@@ -1041,7 +1047,6 @@ void ReadLogicConv() {
 	Lo3 = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4); //Lo3
 	Lo4 = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0); //Lo4
 }
-
 void ReadButton() {
 	bt1 = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8); //BT1
 	bt2 = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_9); //BT2
@@ -1050,11 +1055,6 @@ void ReadButton() {
 	bt5 = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_10); //BT5
 }
 
-void ReadLimit() {
-	LimitBottom = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_7); // LimitTop
-	LimitTop = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6); // LimitBottom
-
-}
 
 void MotorDrive() {
 	if (MotorDriveFlag == 0) {
@@ -1070,63 +1070,53 @@ void MotorDrive() {
 		Arrived = 0;
 
 		float PosNow = QEIdata.TotalPos - StartTotalPos;
+		b_check[8] = PosNow;
 		int8_t DriveDirection = 1; // direction is 1 if up, -1 if down.
 		if (Goal <= StartTotalPos) {
 			DriveDirection = -1;
+			b_check[7] = 1;
 		}
 
 		if(DriveDirection == -1){
 			if ((PosNow <= MotorDriveDampDistance) && (PosNow >= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
-				RealVfeedback = 5;
+				RealVfeedback = 2;
 				b_check[6]= 1;
 			} else if (PosNow > MotorDriveDampDistance) { // Start
-				RealVfeedback = 2;
+				//RealVfeedback = 1.5;
+				RealVfeedback = (fabs(PosNow)+1)*4 / MotorDriveTravelDistance;
 				b_check[6]= 2;
-			} else if (PosNow < MotorDriveTravelDistance) {  //Hard Stop
+			}  else if (PosNow <= MotorDriveTravelDistance) {  //Hard Stop
 				RealVfeedback = 0;
 				b_check[6]= 3;
 			} else if (PosNow < MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop
-				RealVfeedback = 1.5;
+				//RealVfeedback = 1.5;
+				RealVfeedback = (MotorDriveTravelDistance-PosNow)*4 / MotorDriveTravelDistance;
 				b_check[6]= 4;
 			}
 		}
 		if(DriveDirection == 1){
+			b_check[7] = 0;
 			if ((PosNow >= MotorDriveDampDistance) && (PosNow <= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
-				RealVfeedback = 5;
+				RealVfeedback = 12;
 				b_check[6]= 5;
 			} else if (PosNow < MotorDriveDampDistance) { // Start
-				RealVfeedback = 2;
+				//RealVfeedback = 2;
+				RealVfeedback = (PosNow+1) * 12/ MotorDriveDampDistance;
 				b_check[6]= 6;
 			} else if (PosNow > MotorDriveTravelDistance) {  //Hard Stop
 				RealVfeedback = 0;
 				b_check[6]= 7;
 			} else if (PosNow > MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop
-				RealVfeedback = 1.5;
+				//RealVfeedback = 1.5;
+				RealVfeedback = (MotorDriveTravelDistance-PosNow) * 12 / MotorDriveDampDistance;
 				b_check[6]= 8;
 			}
 		}
 
 		RealVfeedback = RealVfeedback * DriveDirection;
-		//Vfeedback = Update_pid(&pid_control, Goal-QEIdata.TotalPos, 8, 10);
-//		if((fabs(Goal-QEIdata.TotalPos) <= Goal-MotorDriveDampDistance) && (fabs(Goal-QEIdata.TotalPos) >= MotorDriveDampDistance)){
-//			RealVfeedback = 5;
-//			b_check[6]= 3;
-//		}else if(fabs(Goal-QEIdata.TotalPos) > fabs(MotorDriveTravelDistance)){
-//			RealVfeedback = 0;
-//			//__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-//			b_check[6]= 4;
-//		}else if(fabs(Goal-QEIdata.TotalPos) <= fabs(MotorDriveDampDistance)){ //start
-//			//RealVfeedback = Vfeedback*0.4;
-//			RealVfeedback = fabs(QEIdata.TotalPos-StartTotalPos+2)*4/(MotorDriveTravelDistance);
-//			b_check[6]= 1;
-//		}else if(fabs(Goal-QEIdata.TotalPos) >= fabs(StartTotalPos+Goal-MotorDriveDampDistance) ){  //stop
-//			RealVfeedback = (Goal-QEIdata.TotalPos)*4/(MotorDriveTravelDistance);
-//			b_check[6]= 2;
-//		}
 
 
-
-		if (RealVfeedback > 0) {  //go up
+		if (DriveDirection == 1) {  //go up
 			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
 			b_check[9]= 4;
 		} else {  //go down
@@ -1135,9 +1125,8 @@ void MotorDrive() {
 			b_check[9]= 5;
 		}
 
-		if(fabs(RealVfeedback) < 1.5  && RealVfeedback!=0){
-			RealVfeedback = 1.5;
-			b_check[7] = 1;
+		if(fabs(RealVfeedback) < 1.3  && RealVfeedback!=0){
+			RealVfeedback = 1.3;
 		}
 
 		duty_cycle_pid = RealVfeedback * 4000 / 12;
@@ -1152,7 +1141,8 @@ void MotorDrive() {
 		Arrived = 1;
 		RealVfeedback = 0;
 		b_check[6] = 6;
-		b_check[8] = 0;
+		MotorDriveFlag = 0;
+
 	}
 }
 
