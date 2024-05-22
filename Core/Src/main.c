@@ -155,6 +155,7 @@ uint8_t MotorDriveFlag = 0;
 float MotorDriveDampDistance = 0;
 float MotorDriveTravelDistance;
 float StartTotalPos;
+float PIDVFeedback;
 //flag
 uint8_t LimitBottomFlag=0;
 /* USER CODE END PV */
@@ -268,7 +269,8 @@ int main(void)
 
 	//re counter
 	if (LimitBottomFlag == 1) {
-
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500);
+		HAL_Delay(100);
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 		memset(&QEIdata, 0, sizeof(QEIdata));
 
@@ -276,8 +278,6 @@ int main(void)
 		b_check[8] = 1;
 		__HAL_TIM_SET_COUNTER(&htim3,0);
 		LimitBottomFlag = 0;
-		HAL_Delay(10);
-
 	}
 
 	static uint64_t timestamp = 0;
@@ -293,8 +293,19 @@ int main(void)
 	RelayDrive();
 	ReadButton();
 	ReadLogicConv();
+	ReadLimit();
 	if (mode == 0){
 		MotorDrive();
+	}
+
+
+	if (LimitBottom == 0) {
+		LimitBottomFlag = 1;
+	}
+
+	if (LimitTop == 0) {
+		mode = 1;
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 	}
 
 	if (Lo3 == 1 && mode !=0) { //joy manual
@@ -325,6 +336,10 @@ int main(void)
 
 			//Set Shelves
 			if(registerFrame[0x10].U16 == 1){
+				// set home
+				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500);
+				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //End effector Go Down
+
 				if (bt1 == 0) {
 					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //Go Down
 					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
@@ -335,20 +350,24 @@ int main(void)
 					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 				}
 
+				// Handle bt5 press, to ensure that this function only trigger once.
 				static uint8_t flagbt5 = 0;
-				if(bt5 == 0){
+				if(bt5 == 0) {
 					static uint64_t timestampbt5 = 0;
-					if(HAL_GetTick() > timestampbt5 && flagbt5 == 0){
+					if(HAL_GetTick() > timestampbt5 && flagbt5 == 0) {
 						timestampbt5 = HAL_GetTick() + 1000;
 						ShelvePos[i] = QEIdata.TotalPos;
 						i+=1;
 						flagbt5 = 1;
 					}
-				} else{
+				} else {
 					flagbt5 = 0;
 				}
+
+				// Set registerFrame 0x10 to 0 (idle) if finish running
 				if(i > 4){
 					i = 0;
+					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 					registerFrame[0x10].U16 = 0;
 				}
 
@@ -382,6 +401,7 @@ int main(void)
 				if(registerFrame[0x01].U16 == 8) {
 					registerFrame[0x01].U16 = 0;
 					registerFrame[0x10].U16 = 16;
+					Arrived = 0;
 					Goal = registerFrame[48].U16/10;
 				}
 
@@ -403,16 +423,18 @@ int main(void)
 					GoalPlace[i] = ShelvePos[PlaceOrder[4-i]-'0'-1];
 					}
 			}
+
 		/////////////////START JOG////////////////////////////////////////////////////////////
 			if(registerFrame[0x10].U16 == 4 && j < 5){
 				GoPick();
 			}else if(registerFrame[0x10].U16 == 8 && j < 5){
-					a = 3;
-				if(ActualGripper == 0){//Gripper BW before move
+				a = 3;
+//				if(ActualGripper == 0){//Gripper BW before move
+					Arrived = 0;
 					Goal = GoalPlace[j];
 					MotorDrive();
 					a = 4;
-				}//Gripper FW Vacuum Off
+//				}//Gripper FW Vacuum Off
 				if(Arrived == 1 && ActualGripper == 1 && ActualVacuum == 0){
 					registerFrame[0x10].U16 = 4;
 					j += 1;
@@ -908,7 +930,7 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : PC7 */
   GPIO_InitStruct.Pin = GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
@@ -920,14 +942,11 @@ static void MX_GPIO_Init(void)
 
   /*Configure GPIO pin : PB6 */
   GPIO_InitStruct.Pin = GPIO_PIN_6;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
-
   HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
@@ -936,18 +955,18 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-void HAL_GPIO_EXTI_Callback (uint16_t GPIO_Pin)
-{
-	if(GPIO_Pin == GPIO_PIN_7){ //limitBottom
-		LimitBottomFlag = 1;
-	}
-
-	if(GPIO_Pin == GPIO_PIN_6){
-		mode = 1;
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-	}
-
-}
+//void HAL_GPIO_EXTI_Callback (uint16_t GPIO_Pin)
+//{
+//	if(GPIO_Pin == GPIO_PIN_7){ //limitBottom
+//		LimitBottomFlag = 1;
+//	}
+//
+//	if(GPIO_Pin == GPIO_PIN_6){
+////		mode = 1;
+////		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+//	}
+//
+//}
 
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
@@ -977,6 +996,7 @@ void convert_to_string(uint16_t number, char* buffer, int buffer_size) {
 void GoPick() {
 	a=0;
 	b_check[5] = 1;
+	Arrived = 0;
 
 	Goal = GoalPick[j];
 	MotorDrive();
@@ -1061,15 +1081,15 @@ void MotorDrive() {
 		// Start: This box of code run only one time.
 		StartTotalPos = QEIdata.TotalPos;
 		MotorDriveTravelDistance = Goal - QEIdata.TotalPos;
-		MotorDriveDampDistance =  MotorDriveTravelDistance * 0.3;
+		MotorDriveDampDistance = MotorDriveTravelDistance * 0.3;
 		// End
 		MotorDriveFlag = 1;
 	}
 
-	if((Goal-QEIdata.TotalPos) > 0.2 || (Goal-QEIdata.TotalPos) < -0.2){
-		Arrived = 0;
+	float PosNow = QEIdata.TotalPos - StartTotalPos;
 
-		float PosNow = QEIdata.TotalPos - StartTotalPos;
+	if((MotorDriveTravelDistance-PosNow) > 0.2 || (MotorDriveTravelDistance-PosNow) < -0.2){
+		Arrived = 0;
 		b_check[8] = PosNow;
 		int8_t DriveDirection = 1; // direction is 1 if up, -1 if down.
 		if (Goal <= StartTotalPos) {
@@ -1077,20 +1097,21 @@ void MotorDrive() {
 			b_check[7] = 1;
 		}
 
+		// Trajectory generator
 		if(DriveDirection == -1){
 			if ((PosNow <= MotorDriveDampDistance) && (PosNow >= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
-				RealVfeedback = 2;
+				RealVfeedback = 7;
 				b_check[6]= 1;
 			} else if (PosNow > MotorDriveDampDistance) { // Start
 				//RealVfeedback = 1.5;
-				RealVfeedback = (fabs(PosNow)+1)*4 / MotorDriveTravelDistance;
+				RealVfeedback = (fabs(PosNow)+1)*6 / MotorDriveTravelDistance;
 				b_check[6]= 2;
 			}  else if (PosNow <= MotorDriveTravelDistance) {  //Hard Stop
 				RealVfeedback = 0;
 				b_check[6]= 3;
 			} else if (PosNow < MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop
 				//RealVfeedback = 1.5;
-				RealVfeedback = (MotorDriveTravelDistance-PosNow)*4 / MotorDriveTravelDistance;
+				RealVfeedback = (MotorDriveTravelDistance-PosNow)*6 / MotorDriveTravelDistance;
 				b_check[6]= 4;
 			}
 		}
@@ -1113,6 +1134,12 @@ void MotorDrive() {
 			}
 		}
 
+		PIDVFeedback = Update_pid(&pid_control, MotorDriveTravelDistance-PosNow, 10, 12);
+
+		if (fabs(PIDVFeedback) < fabs(RealVfeedback)) {
+			RealVfeedback = PIDVFeedback;
+		}
+
 		RealVfeedback = RealVfeedback * DriveDirection;
 
 
@@ -1125,11 +1152,15 @@ void MotorDrive() {
 			b_check[9]= 5;
 		}
 
-		if(fabs(RealVfeedback) < 1.3  && RealVfeedback!=0){
-			RealVfeedback = 1.3;
+		if(fabs(RealVfeedback) < 1.6  && RealVfeedback!=0){
+			if (DriveDirection == -1) {
+				RealVfeedback = 1;
+			} else {
+				RealVfeedback = 1.6;
+			}
 		}
 
-		duty_cycle_pid = RealVfeedback * 4000 / 12;
+		duty_cycle_pid = fabs(RealVfeedback) * 4000 / 12;
 		if(RealVfeedback == 0){
 			duty_cycle_pid = 0;
 		}
@@ -1141,8 +1172,6 @@ void MotorDrive() {
 		Arrived = 1;
 		RealVfeedback = 0;
 		b_check[6] = 6;
-		MotorDriveFlag = 0;
-
 	}
 }
 
@@ -1151,6 +1180,12 @@ void RelayDrive() {
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, relay[1]); // Relay1
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, relay[2]); // Mode status led
 	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, relay[3]); // Heart beat
+}
+
+void ReadLimit(){
+
+	LimitBottom = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_7);//bottom
+	LimitTop = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6);//top
 }
 /* USER CODE END 4 */
 
