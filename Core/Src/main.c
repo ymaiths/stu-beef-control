@@ -269,7 +269,8 @@ int main(void)
 
 	//re counter
 	if (LimitBottomFlag == 1) {
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
+		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
 		HAL_Delay(100);
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 		memset(&QEIdata, 0, sizeof(QEIdata));
@@ -421,7 +422,7 @@ int main(void)
 				for(int i = 0;i<=4;i++){
 					GoalPick[i] = ShelvePos[PickOrder[4-i]-'0'-1];
 					GoalPlace[i] = ShelvePos[PlaceOrder[4-i]-'0'-1];
-					}
+				}
 			}
 
 		/////////////////START JOG////////////////////////////////////////////////////////////
@@ -1104,14 +1105,14 @@ void MotorDrive() {
 				b_check[6]= 1;
 			} else if (PosNow > MotorDriveDampDistance) { // Start
 				//RealVfeedback = 1.5;
-				RealVfeedback = (fabs(PosNow)+1)*6 / MotorDriveTravelDistance;
+				RealVfeedback = (fabs(PosNow)+1)*7 / MotorDriveTravelDistance;
 				b_check[6]= 2;
 			}  else if (PosNow <= MotorDriveTravelDistance) {  //Hard Stop
 				RealVfeedback = 0;
 				b_check[6]= 3;
 			} else if (PosNow < MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop
 				//RealVfeedback = 1.5;
-				RealVfeedback = (MotorDriveTravelDistance-PosNow)*6 / MotorDriveTravelDistance;
+				RealVfeedback = (MotorDriveTravelDistance-PosNow)*7 / MotorDriveTravelDistance;
 				b_check[6]= 4;
 			}
 		}
