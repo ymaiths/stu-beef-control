@@ -69,6 +69,9 @@ uint64_t upper = 0;
 uint64_t read = 0;
 float linearspeed = 0;
 uint8_t relay[4];
+uint32_t WaitGripper;
+uint8_t GripperFlag;
+uint32_t CountGripper;
 
 uint32_t QEIReadRaw;
 float velodegree;
@@ -158,6 +161,7 @@ float StartTotalPos;
 float PIDVFeedback;
 //flag
 uint8_t LimitBottomFlag=0;
+uint8_t flagpick = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -259,6 +263,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+
 	Modbus_Protocal_Worker();
 	registerFrame[0x11].U16 = QEIdata.TotalPos*10; //ZPos
 	registerFrame[0x12].U16 =Z[1]; //ZSpeed
@@ -269,15 +275,14 @@ int main(void)
 
 	//re counter
 	if (LimitBottomFlag == 1) {
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
-		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
-		HAL_Delay(100);
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 		memset(&QEIdata, 0, sizeof(QEIdata));
 
-		registerFrame[0x10].U16 = 0;
-		b_check[8] = 1;
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
+		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
+		HAL_Delay(200);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 		__HAL_TIM_SET_COUNTER(&htim3,0);
+		registerFrame[0x10].U16 = 0;
 		LimitBottomFlag = 0;
 	}
 
@@ -319,13 +324,14 @@ int main(void)
 			} else {
 				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 			}
+			relay[3] =0;
 		} else if (Lo3 == 0 && mode!=0) {
-
+			relay[3] = 1;
 
 			//Set Home
 			if(registerFrame[0x01].U16 == 2){
-				registerFrame[0x01].U16 = 0;
 				registerFrame[0x10].U16 = 2;
+				registerFrame[0x01].U16 = 0;
 			}
 			//Set Shelves
 			if (registerFrame[0x01].U16 == 1){
@@ -337,17 +343,14 @@ int main(void)
 
 			//Set Shelves
 			if(registerFrame[0x10].U16 == 1){
-				// set home
-				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500);
-				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //End effector Go Down
 
-				if (bt1 == 0) {
-					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //Go Down
-					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
-				} else if (bt2 == 0) {
+				if ((bt2 == 0) && (bt1 == 1)) {
 					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0); //Go Up
 					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
-				} else if(bt1 ==1 && bt2==1){
+				} else if((bt2 == 1) && (bt1 == 0)){
+					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //Go Down
+					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
+				} else{
 					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 				}
 
@@ -386,16 +389,10 @@ int main(void)
 			//Set Home Run To limit switch
 			if(registerFrame[0x10].U16 == 2){
 				b_check[0] = 2;
-				//if(     )
 
 				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500);
 				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //End effector Go Down
 
-//				if(LimitBottom = 0){
-//					b_check[1] = 1;
-//
-//				}
-				//}
 			}
 
 			//Run Point Mode
@@ -429,26 +426,16 @@ int main(void)
 			if(registerFrame[0x10].U16 == 4 && j < 5){
 				GoPick();
 			}else if(registerFrame[0x10].U16 == 8 && j < 5){
-				a = 3;
-//				if(ActualGripper == 0){//Gripper BW before move
-					Arrived = 0;
-					Goal = GoalPlace[j];
-					MotorDrive();
-					a = 4;
-//				}//Gripper FW Vacuum Off
-				if(Arrived == 1 && ActualGripper == 1 && ActualVacuum == 0){
-					registerFrame[0x10].U16 = 4;
-					j += 1;
-					a = 5;
-					}
+				GoPlace();
 			}else if(j==5){
 				registerFrame[0x10].U16 = 0;
 				j = 0;
-				a = 6;
+				a = 7;
 			}
 		///////////////////END JOG///////////////////////////////////////////////////////////
 
 		}
+
 
 
 
@@ -974,6 +961,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	if(htim == &htim4)
 	{
 		registerFrame[0].U16 = 22881;
+		CountGripper += 1;
 	}
 	if (htim == &htim5) {
 		upper += 1;
@@ -995,21 +983,70 @@ void convert_to_string(uint16_t number, char* buffer, int buffer_size) {
 }
 
 void GoPick() {
-	a=0;
+	//a=0;
 	b_check[5] = 1;
 	Arrived = 0;
 
 	Goal = GoalPick[j];
 	MotorDrive();
+
+	static uint64_t timestampVacuum = 0;
   //Gripper FW Vacuum On
-	if(Arrived == 1 && ActualGripper == 1 && ActualVacuum == 1){
-		registerFrame[0x10].U16 = 8;
-		a = 2;
+	if(Arrived == 1){
+		relay[1] = 1; //Gripper push
+		relay[0] = 0;
+		relay[2] = 1; //Vacuum On
+		a=1;
+		if (GripperFlag == 0) {
+			timestampVacuum = HAL_GetTick()+500;
+			WaitGripper = CountGripper+150;
+			GripperFlag = 1;
+		}
 	}
+	if((ActualGripper == 1) && (HAL_GetTick()>= timestampVacuum)){ //leed switch Out And wait 200 ms
+		relay[0] = 1; //Gripper pull
+		relay[1] = 0;
+		a=2;
+		flagpick = 1;
+	}
+
+	if(ActualGripper == 0 && flagpick == 1){
+		GripperFlag = 0;
+		registerFrame[0x10].U16 = 8;
+		flagpick = 0;
+		a=3;
+		MotorDriveFlag = 0;
+	}
+
 }
 
 void GoPlace() {
-
+	a = 4;
+	static uint64_t timestampVacuum = 0;
+	if(ActualGripper == 0){//Gripper BW before move
+		Arrived = 0;
+		Goal = GoalPlace[j];
+		MotorDrive();
+		a = 5;
+	}//Gripper FW Vacuum Off
+	if(Arrived == 1){
+		relay[1] = 1; //Gripper push
+		relay[0] = 0;
+		relay[2] = 0; //Vacuum Off
+		if (GripperFlag == 0) {
+			timestampVacuum = HAL_GetTick()+500;
+			WaitGripper = CountGripper+8;
+			GripperFlag = 1;
+		}
+	}
+	if((ActualGripper == 1) && (ActualVacuum == 0) && (HAL_GetTick()>= timestampVacuum) ){
+		//wait 400 ms
+		GripperFlag = 0;
+		registerFrame[0x10].U16 = 4;
+		j += 1;
+		a = 6;
+		MotorDriveFlag = 0;
+	}
 }
 
 
@@ -1063,10 +1100,15 @@ void QEIEncoderPosVel_Update() {
 }
 
 void ReadLogicConv() {
-	Lo1 = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0); //Lo1
-	Lo2 = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1); //Lo2
+	Lo1 = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0); //Lo1 Pull
+	Lo2 = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1); //Lo2 Push
 	Lo3 = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4); //Lo3
 	Lo4 = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0); //Lo4
+	if(Lo1 == 0 && Lo2 == 1){ //Pull
+		ActualGripper = 1;
+	}else if(Lo1 == 1 && Lo2 == 0){ //Push
+		ActualGripper = 0;
+	}
 }
 void ReadButton() {
 	bt1 = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_8); //BT1
@@ -1155,7 +1197,7 @@ void MotorDrive() {
 
 		if(fabs(RealVfeedback) < 1.6  && RealVfeedback!=0){
 			if (DriveDirection == -1) {
-				RealVfeedback = 1;
+				RealVfeedback = 1.3;
 			} else {
 				RealVfeedback = 1.6;
 			}
@@ -1177,10 +1219,11 @@ void MotorDrive() {
 }
 
 void RelayDrive() {
-	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_1, relay[0]); //
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, relay[1]); // Relay1
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, relay[2]); // Mode status led
-	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, relay[3]); // Heart beat
+	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_1, relay[0]); // Pull
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_1, relay[1]); // Push
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_2, relay[2]); // Vacuum
+	HAL_GPIO_WritePin(GPIOB, GPIO_PIN_9, relay[3]); // mode status
+
 }
 
 void ReadLimit(){
