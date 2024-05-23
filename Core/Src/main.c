@@ -162,6 +162,7 @@ float PIDVFeedback;
 //flag
 uint8_t LimitBottomFlag=0;
 uint8_t flagpick = 0;
+uint8_t flagplace = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -1021,13 +1022,13 @@ void GoPick() {
 }
 
 void GoPlace() {
-	a = 4;
+
 	static uint64_t timestampVacuum = 0;
 	if(ActualGripper == 0){//Gripper BW before move
 		Arrived = 0;
 		Goal = GoalPlace[j];
 		MotorDrive();
-		a = 5;
+		a = 4;
 	}//Gripper FW Vacuum Off
 	if(Arrived == 1){
 		relay[1] = 1; //Gripper push
@@ -1041,11 +1042,17 @@ void GoPlace() {
 	}
 	if((ActualGripper == 1) && (ActualVacuum == 0) && (HAL_GetTick()>= timestampVacuum) ){
 		//wait 400 ms
+		flagplace = 1;
+		a = 5;
+
+	}
+	if((flagplace == 1) && (ActualGripper == 0) ){
 		GripperFlag = 0;
 		registerFrame[0x10].U16 = 4;
-		j += 1;
+		j += 1; //use
 		a = 6;
 		MotorDriveFlag = 0;
+		flagplace = 0;
 	}
 }
 
