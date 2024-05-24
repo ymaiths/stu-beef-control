@@ -67,7 +67,8 @@ List to test
 uint16_t timerange = 2;
 uint64_t upper = 0;
 uint64_t read = 0;
-float linearspeed = 0;
+float linearspeed[2] ;
+float linearacc = 0;
 uint8_t relay[4];
 uint32_t WaitGripper;
 uint8_t GripperFlag;
@@ -102,7 +103,7 @@ uint16_t duty_cycle = 1000;
 uint8_t Lo1 = 0; // foreward leedswitch
 uint8_t Lo2 = 0;// backward
 uint8_t Lo3 = 0; //joy vs pid
-uint8_t Lo4 = 0; //emer
+uint8_t Lo4 = 1; //emer
 
 //Botton
 uint8_t bt1 = 0;
@@ -137,10 +138,10 @@ uint8_t PercentDis;
 ModbusHandleTypedef hmodbus;
 u16u8_t registerFrame[200];
 
-uint16_t ShelvePos[5];
+float ShelvePos[5];
 float HomePos = 0;
 
-uint16_t Z[4];	//Z[] = ZPos ZSpeed ZAccel XPos
+float Z[4];	//Z[] = ZPos ZSpeed ZAccel XPos
 uint8_t BaseVacuum;
 uint8_t BaseGripper;
 uint8_t ActualVacuum;
@@ -162,7 +163,11 @@ float PIDVFeedback;
 //flag
 uint8_t LimitBottomFlag=0;
 uint8_t flagpick = 0;
+uint8_t flagpickend = 0;
 uint8_t flagplace = 0;
+uint8_t flagplaceend = 0;
+uint8_t flagEmer = 0;
+uint8_t flagstart =0 ;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -189,6 +194,7 @@ void ReadButton();
 void ReadLimit();
 void WritePins();
 void MotorDrive();
+void MotorDrivePoint();
 void RelayDrive();
 void GoPick();
 void GoPlace();
@@ -238,6 +244,10 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   //pwm setup
+  	 relay[0] = 1;
+  	 relay[1] = 0;
+  	 relay[2] = 0;
+
 	HAL_TIM_Base_Start(&htim1);
 	HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
@@ -245,7 +255,6 @@ int main(void)
 	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
 	HAL_TIM_Base_Start_IT(&htim4);
 	upper = 0;
-
 	PID_init(&pid_control, pid_p, pid_i, pid_d ,timerange);
 
 	hmodbus.huart = &huart2;
@@ -255,6 +264,7 @@ int main(void)
 	Modbus_init(&hmodbus, registerFrame);
 
 	HAL_TIM_Base_Start_IT(&htim5);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -264,13 +274,20 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	if(flagstart == 0){
+		relay[0] = 0;
+		relay[1] = 0;
+		relay[2] = 0;
+		flagstart = 1;
+	}
 
 
 	Modbus_Protocal_Worker();
 	registerFrame[0x11].U16 = QEIdata.TotalPos*10; //ZPos
-	registerFrame[0x12].U16 =Z[1]; //ZSpeed
-	registerFrame[0x13].U16 =Z[2]; //ZAccel
-	registerFrame[0x40].U16 =Z[3]; //XPos
+	//registerFrame[0x11].U16 = b_check[0];
+	registerFrame[0x12].U16 = fabs(linearspeed[NEW]*10); //ZSpeed
+	registerFrame[0x13].U16 = fabs(linearacc); //ZAccel
+	registerFrame[0x40].U16 = Z[3]; //XPos
 	BaseVacuum = registerFrame[2].U16; // 0 = off , 1 = on
 	BaseGripper = registerFrame[3].U16; // 0 = Backward , 1 = Forward
 
@@ -278,7 +295,7 @@ int main(void)
 	if (LimitBottomFlag == 1) {
 		memset(&QEIdata, 0, sizeof(QEIdata));
 
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500);
 		HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
 		HAL_Delay(200);
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
@@ -287,14 +304,23 @@ int main(void)
 		LimitBottomFlag = 0;
 	}
 
+	if(Lo4 == 0  && flagEmer==0){
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+		relay[0] = 0; //Gripper pull
+		relay[1] = 0;
+		relay[2] = 0;
+		flagEmer = 1;
+	}
+	if((Lo4 == 1) && (flagEmer == 1)){
+		MotorDriveFlag = 1;
+		flagEmer = 0;
+	}
+
 	static uint64_t timestamp = 0;
 	int64_t currentTime = Micros();
 	if (currentTime > timestamp) {
 		timestamp = currentTime + timerange;	 //us
 		QEIEncoderPosVel_Update();
-		velodegree = QEIdata.QEIAngularVelocity;
-		velodegree = (velodegree * 60) / 800;
-		linearspeed = velodegree * 14 / 60.0;
 	}
 
 	RelayDrive();
@@ -316,18 +342,44 @@ int main(void)
 	}
 
 	if (Lo3 == 1 && mode !=0) { //joy manual
-			if (bt1 == 0) {
+			if (bt3 == 0) {
 				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1);
 				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
 			} else if (bt2 == 0) {
 				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
 				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
-			} else {
+			} else if (bt1 == 0){
+				Z[3] = Z[3] + 1 ;
+			}else if(bt4 == 0){
+				Z[3] = Z[3] - 1 ;
+			}else {
 				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 			}
-			relay[3] =0;
+
+			relay[3] = 0;
 		} else if (Lo3 == 0 && mode!=0) {
 			relay[3] = 1;
+			 if (bt1 == 0){
+				 Z[3] = Z[3] + 1 ;
+			}else if(bt4 == 0){
+				Z[3] = Z[3] - 1 ;
+			}
+			if(registerFrame[0x10].U16 == 0){
+
+				if(BaseGripper==1){
+					relay[0] = 0; //Gripper push
+					relay[1] = 1;
+				}else if(BaseGripper == 0){
+					relay[0] = 1; //Gripper push
+					relay[1] = 0;
+				}
+				if(BaseVacuum==1){
+					relay[2] = 1;
+				}else if(BaseVacuum == 0){
+					relay[2] = 0;
+				}
+			}
+
 
 			//Set Home
 			if(registerFrame[0x01].U16 == 2){
@@ -340,17 +392,16 @@ int main(void)
 				registerFrame[0x10].U16 = 1;
 			}
 
-			b_check[0] = 1;
 
 			//Set Shelves
 			if(registerFrame[0x10].U16 == 1){
 
 				if ((bt2 == 0) && (bt1 == 1)) {
 					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0); //Go Up
-					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
+					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 700);
 				} else if((bt2 == 1) && (bt1 == 0)){
 					HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //Go Down
-					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
+					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500);
 				} else{
 					__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 				}
@@ -378,20 +429,19 @@ int main(void)
 
 
 				bt5prev = bt5;
-				registerFrame[0x23].U16 = ShelvePos[0];
-				registerFrame[0x24].U16 = ShelvePos[1];
-				registerFrame[0x25].U16 = ShelvePos[2];
-				registerFrame[0x26].U16 = ShelvePos[3];
-				registerFrame[0x27].U16 = ShelvePos[4];
+				registerFrame[0x23].U16 = ShelvePos[0]*10;
+				registerFrame[0x24].U16 = ShelvePos[1]*10;
+				registerFrame[0x25].U16 = ShelvePos[2]*10;
+				registerFrame[0x26].U16 = ShelvePos[3]*10;
+				registerFrame[0x27].U16 = ShelvePos[4]*10;
 				//timestamp = HAL_GetTick()+2000;
 			}
 
 
 			//Set Home Run To limit switch
 			if(registerFrame[0x10].U16 == 2){
-				b_check[0] = 2;
 
-				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500);
+				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 800);
 				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //End effector Go Down
 
 			}
@@ -405,10 +455,11 @@ int main(void)
 				}
 
 				if(registerFrame[0x10].U16 == 16){
-					MotorDrive();
+					MotorDrivePoint();
 				}
 				if(Arrived == 1 && registerFrame[0x10].U16 == 16) {
 					registerFrame[0x10].U16 = 0;
+					MotorDriveFlag = 0;
 				}
 
 			//Run Jog Mode
@@ -418,8 +469,11 @@ int main(void)
 				registerFrame[0x01].U16 = 0;
 				registerFrame[0x10].U16 = 4;
 				for(int i = 0;i<=4;i++){
+
 					GoalPick[i] = ShelvePos[PickOrder[4-i]-'0'-1];
 					GoalPlace[i] = ShelvePos[PlaceOrder[4-i]-'0'-1];
+//					GoalPick[i] = i + 10;
+//					GoalPlace[i] =(i+1)*100 +10;
 				}
 			}
 
@@ -430,6 +484,12 @@ int main(void)
 				GoPlace();
 			}else if(j==5){
 				registerFrame[0x10].U16 = 0;
+				for(int i = 0;i<=4;i++){
+					GoalPick[i] = 0;
+					GoalPlace[i] = 0;
+			}
+
+
 				j = 0;
 				a = 7;
 			}
@@ -993,25 +1053,29 @@ void GoPick() {
 
 	static uint64_t timestampVacuum = 0;
   //Gripper FW Vacuum On
-	if(Arrived == 1){
-		relay[1] = 1; //Gripper push
-		relay[0] = 0;
+	if((Arrived == 1)&&(flagpickend ==0)){
 		relay[2] = 1; //Vacuum On
+
+		relay[0] = 0; //Gripper push
+		relay[1] = 1;
+
 		a=1;
 		if (GripperFlag == 0) {
 			timestampVacuum = HAL_GetTick()+500;
 			WaitGripper = CountGripper+150;
 			GripperFlag = 1;
+			flagpickend = 0;
 		}
 	}
-	if((ActualGripper == 1) && (HAL_GetTick()>= timestampVacuum)){ //leed switch Out And wait 200 ms
+	if((ActualGripper == 1) && (flagpickend == 0) && (HAL_GetTick()>= timestampVacuum)){ //leed switch Out And wait 200 ms
 		relay[0] = 1; //Gripper pull
 		relay[1] = 0;
 		a=2;
 		flagpick = 1;
+		flagpickend = 1;
 	}
 
-	if(ActualGripper == 0 && flagpick == 1){
+	if((ActualGripper == 0) && (flagpick == 1) && (flagpickend == 1)){
 		GripperFlag = 0;
 		registerFrame[0x10].U16 = 8;
 		flagpick = 0;
@@ -1024,35 +1088,43 @@ void GoPick() {
 void GoPlace() {
 
 	static uint64_t timestampVacuum = 0;
-	if(ActualGripper == 0){//Gripper BW before move
+	if((ActualGripper == 0)){//Gripper BW before move
 		Arrived = 0;
-		Goal = GoalPlace[j];
+		Goal = GoalPlace[j]+10;
 		MotorDrive();
 		a = 4;
 	}//Gripper FW Vacuum Off
-	if(Arrived == 1){
-		relay[1] = 1; //Gripper push
-		relay[0] = 0;
+	if((Arrived == 1)&&(flagplaceend == 0)){
 		relay[2] = 0; //Vacuum Off
+
+		relay[0] = 0;
+		relay[1] = 1; //Gripper push
 		if (GripperFlag == 0) {
 			timestampVacuum = HAL_GetTick()+500;
 			WaitGripper = CountGripper+8;
 			GripperFlag = 1;
+			flagplaceend = 0;
 		}
 	}
-	if((ActualGripper == 1) && (ActualVacuum == 0) && (HAL_GetTick()>= timestampVacuum) ){
+	if((ActualGripper == 1) && (ActualVacuum == 0) &&(flagplaceend == 0) && (HAL_GetTick()>= timestampVacuum) ){
 		//wait 400 ms
 		flagplace = 1;
 		a = 5;
+		relay[0] = 1; //pull
+		relay[1] = 0; //
+		flagplaceend = 1;
 
 	}
-	if((flagplace == 1) && (ActualGripper == 0) ){
+	if((flagplace == 1) && (ActualGripper == 0)&&(flagplaceend == 1) ){
 		GripperFlag = 0;
 		registerFrame[0x10].U16 = 4;
 		j += 1; //use
 		a = 6;
 		MotorDriveFlag = 0;
 		flagplace = 0;
+		flagplaceend = 0;
+		flagpickend = 0;
+
 	}
 }
 
@@ -1078,6 +1150,7 @@ void QEIEncoderPosVel_Update() {
 	//calculate dx
 	int32_t diffPosition = QEIdata.Position[NEW] - QEIdata.Position[OLD];
 	int32_t diff1turn = QEIdata.QEIPostion_1turn[NEW] - QEIdata.QEIPostion_1turn[OLD];
+
 	//Handle Warp around
 	if (diffPosition > 32400) {
 		diffPosition -= 64800;
@@ -1092,17 +1165,28 @@ void QEIEncoderPosVel_Update() {
 	if (diff1turn < -400) {
 		QEIdata.QEIRound += 1;
 	}
+
+
 	QEIdata.TotalPos = (QEIdata.QEIRound * 14) + QEIdata.QEIPostion_1turn[NEW] * 14 / 800; //linear pos in mm uint
 
 			//calculate dt
 	float diffTime = (QEIdata.TimeStamp[NEW] - QEIdata.TimeStamp[OLD])
 			* 1e-6;
+
 	//calculate angular velocity
 	QEIdata.QEIAngularVelocity = diffPosition / diffTime;
+	velodegree = QEIdata.QEIAngularVelocity;
+	velodegree = (velodegree * 60) / 800;
+	linearspeed[NEW] = velodegree * 14 / 60.0;
+
+
+	float diffVel = linearspeed[NEW] - linearspeed[OLD];
+	linearacc = diffVel/diffTime;
 	//store value for next loop
 	QEIdata.Position[OLD] = QEIdata.Position[NEW];
 	QEIdata.TimeStamp[OLD] = QEIdata.TimeStamp[NEW];
 	QEIdata.QEIPostion_1turn[OLD] = QEIdata.QEIPostion_1turn[NEW];
+	linearspeed[OLD] = linearspeed[NEW];
 
 }
 
@@ -1111,9 +1195,9 @@ void ReadLogicConv() {
 	Lo2 = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_1); //Lo2 Push
 	Lo3 = HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_4); //Lo3
 	Lo4 = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0); //Lo4
-	if(Lo1 == 0 && Lo2 == 1){ //Pull
+	if(Lo1 == 0 && Lo2 == 1){ //Push
 		ActualGripper = 1;
-	}else if(Lo1 == 1 && Lo2 == 0){ //Push
+	}else if(Lo1 == 1 && Lo2 == 0){ //Pull
 		ActualGripper = 0;
 	}
 }
@@ -1131,14 +1215,14 @@ void MotorDrive() {
 		// Start: This box of code run only one time.
 		StartTotalPos = QEIdata.TotalPos;
 		MotorDriveTravelDistance = Goal - QEIdata.TotalPos;
-		MotorDriveDampDistance = MotorDriveTravelDistance * 0.3;
+		MotorDriveDampDistance = MotorDriveTravelDistance * 0.2;
 		// End
 		MotorDriveFlag = 1;
 	}
 
 	float PosNow = QEIdata.TotalPos - StartTotalPos;
 
-	if((MotorDriveTravelDistance-PosNow) > 0.2 || (MotorDriveTravelDistance-PosNow) < -0.2){
+	if((MotorDriveTravelDistance-PosNow) > 0.1 || ((MotorDriveTravelDistance-PosNow) < -0.1)){
 		Arrived = 0;
 		b_check[8] = PosNow;
 		int8_t DriveDirection = 1; // direction is 1 if up, -1 if down.
@@ -1150,23 +1234,22 @@ void MotorDrive() {
 		// Trajectory generator
 		if(DriveDirection == -1){
 			if ((PosNow <= MotorDriveDampDistance) && (PosNow >= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
-				RealVfeedback = 7;
+				RealVfeedback = 10;
 				b_check[6]= 1;
 			} else if (PosNow > MotorDriveDampDistance) { // Start
 				//RealVfeedback = 1.5;
-				RealVfeedback = (fabs(PosNow)+1)*7 / MotorDriveTravelDistance;
+				RealVfeedback = (fabs(PosNow)+1)*13 / MotorDriveTravelDistance;
 				b_check[6]= 2;
 			}  else if (PosNow <= MotorDriveTravelDistance) {  //Hard Stop
 				RealVfeedback = 0;
 				b_check[6]= 3;
 			} else if (PosNow < MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop
 				//RealVfeedback = 1.5;
-				RealVfeedback = (MotorDriveTravelDistance-PosNow)*7 / MotorDriveTravelDistance;
+				RealVfeedback = (MotorDriveTravelDistance-PosNow)*10 / MotorDriveTravelDistance;
 				b_check[6]= 4;
 			}
 		}
 		if(DriveDirection == 1){
-			b_check[7] = 0;
 			if ((PosNow >= MotorDriveDampDistance) && (PosNow <= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
 				RealVfeedback = 12;
 				b_check[6]= 5;
@@ -1204,7 +1287,7 @@ void MotorDrive() {
 
 		if(fabs(RealVfeedback) < 1.6  && RealVfeedback!=0){
 			if (DriveDirection == -1) {
-				RealVfeedback = 1.3;
+				RealVfeedback = 1.25;
 			} else {
 				RealVfeedback = 1.6;
 			}
@@ -1216,7 +1299,105 @@ void MotorDrive() {
 		}
 
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle_pid);
-		b_check[1] =2;
+	}else{
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+		Arrived = 1;
+		RealVfeedback = 0;
+		b_check[6] = 6;
+	}
+}
+void MotorDrivePoint() {
+	if (MotorDriveFlag == 0) {
+		// Start: This box of code run only one time.
+		StartTotalPos = QEIdata.TotalPos;
+		MotorDriveTravelDistance = Goal - QEIdata.TotalPos;
+		MotorDriveDampDistance = MotorDriveTravelDistance * 0.3;
+		// End
+		MotorDriveFlag = 1;
+	}
+
+	float PosNow = QEIdata.TotalPos - StartTotalPos;
+
+	if((MotorDriveTravelDistance-PosNow) > 0.1 || ((MotorDriveTravelDistance-PosNow) < -0.1)){
+		Arrived = 0;
+		b_check[8] = PosNow;
+		int8_t DriveDirection = 1; // direction is 1 if up, -1 if down.
+		if (Goal <= StartTotalPos) {
+			DriveDirection = -1;
+			b_check[7] = 1;
+		}
+//		if(MotorDriveTravelDistance<=100){
+//			RealVfeedback = 3;
+//		}
+
+		// Trajectory generator
+		if((DriveDirection == -1)&&(MotorDriveTravelDistance>0)){
+			if ((PosNow <= MotorDriveDampDistance) && (PosNow >= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
+				RealVfeedback = 7;
+				b_check[6]= 1;
+			} else if (PosNow > MotorDriveDampDistance) { // Start
+				//RealVfeedback = 1.5;
+				RealVfeedback = (fabs(PosNow)+1)*7 / MotorDriveTravelDistance;
+				b_check[6]= 2;
+			}  else if (PosNow <= MotorDriveTravelDistance) {  //Hard Stop
+				RealVfeedback = 0;
+				b_check[6]= 3;
+			} else if (PosNow < MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop
+				//RealVfeedback = 1.5;
+				RealVfeedback = (MotorDriveTravelDistance-PosNow)*7 / MotorDriveTravelDistance;
+				b_check[6]= 4;
+			}
+		}
+		if((DriveDirection == 1)&&(MotorDriveTravelDistance>0)){
+			if ((PosNow >= MotorDriveDampDistance) && (PosNow <= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
+				RealVfeedback = 10;
+				b_check[6]= 5;
+			} else if (PosNow < MotorDriveDampDistance) { // Start
+				//RealVfeedback = 2;
+				RealVfeedback = (PosNow+1) * 10/ MotorDriveDampDistance;
+				b_check[6]= 6;
+			} else if (PosNow > MotorDriveTravelDistance) {  //Hard Stop
+				RealVfeedback = 0;
+				b_check[6]= 7;
+			} else if (PosNow > MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop
+				//RealVfeedback = 1.5;
+				RealVfeedback = (MotorDriveTravelDistance-PosNow) * 10 / MotorDriveDampDistance;
+				b_check[6]= 8;
+			}
+		}
+
+		PIDVFeedback = Update_pid(&pid_control, MotorDriveTravelDistance-PosNow, 10, 12);
+
+		if (fabs(PIDVFeedback) < fabs(RealVfeedback)) {
+			RealVfeedback = PIDVFeedback;
+		}
+
+		RealVfeedback = RealVfeedback * DriveDirection;
+
+
+		if (DriveDirection == 1) {  //go up
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 0);
+			b_check[9]= 4;
+		} else {  //go down
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1);
+			RealVfeedback = RealVfeedback * (-1);
+			b_check[9]= 5;
+		}
+
+		if(fabs(RealVfeedback) < 1.6  && RealVfeedback!=0){
+			if (DriveDirection == -1) {
+				RealVfeedback = 1.2;
+			} else {
+				RealVfeedback = 1.6;
+			}
+		}
+
+		duty_cycle_pid = fabs(RealVfeedback) * 4000 / 12;
+		if(RealVfeedback == 0){
+			duty_cycle_pid = 0;
+		}
+
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle_pid);
 	}else{
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 		Arrived = 1;
