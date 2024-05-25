@@ -168,6 +168,8 @@ uint8_t flagplace = 0;
 uint8_t flagplaceend = 0;
 uint8_t flagEmer = 0;
 uint8_t flagstart =0 ;
+float PosNow = 0;
+int8_t DriveDirection = 1;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -327,10 +329,6 @@ int main(void)
 	ReadButton();
 	ReadLogicConv();
 	ReadLimit();
-	if (mode == 0){
-		MotorDrive();
-	}
-
 
 	if (LimitBottom == 0) {
 		LimitBottomFlag = 1;
@@ -452,14 +450,15 @@ int main(void)
 					registerFrame[0x10].U16 = 16;
 					Arrived = 0;
 					MotorDriveFlag = 0;
-					Goal = registerFrame[48].U16/10;
+					Goal = registerFrame[0x30].U16/10;
 
 				}
 
 				if(registerFrame[0x10].U16 == 16){
 					MotorDrivePoint();
 				}
-				if(Arrived == 1 && registerFrame[0x10].U16 == 16) {
+				if(Arrived >= 10 && registerFrame[0x10].U16 == 16) {
+					Arrived = 0;
 					registerFrame[0x10].U16 = 0;
 					MotorDriveFlag = 0;
 				}
@@ -1047,6 +1046,7 @@ void convert_to_string(uint16_t number, char* buffer, int buffer_size) {
 
 void GoPick() {
 	//a=0;
+	b_check[0]=2;
 	b_check[5] = 1;
 	Arrived = 0;
 
@@ -1088,7 +1088,7 @@ void GoPick() {
 }
 
 void GoPlace() {
-
+	b_check[0] = 1;
 	static uint64_t timestampVacuum = 0;
 	if((ActualGripper == 0)){//Gripper BW before move
 		Arrived = 0;
@@ -1222,12 +1222,12 @@ void MotorDrive() {
 		MotorDriveFlag = 1;
 	}
 
-	float PosNow = QEIdata.TotalPos - StartTotalPos;
+	PosNow = QEIdata.TotalPos - StartTotalPos;
 
 	if((MotorDriveTravelDistance-PosNow) > 0.1 || ((MotorDriveTravelDistance-PosNow) < -0.1)){
 		Arrived = 0;
 		b_check[8] = PosNow;
-		int8_t DriveDirection = 1; // direction is 1 if up, -1 if down.
+		DriveDirection = 1; // direction is 1 if up, -1 if down.
 		if (Goal <= StartTotalPos) {
 			DriveDirection = -1;
 			b_check[7] = 1;
@@ -1314,40 +1314,45 @@ void MotorDrivePoint() {
 		// Start: This box of code run only one time.
 		StartTotalPos = QEIdata.TotalPos;
 		MotorDriveTravelDistance = Goal - QEIdata.TotalPos;
-		MotorDriveDampDistance = MotorDriveTravelDistance * 0.4;
+		MotorDriveDampDistance = MotorDriveTravelDistance * 0.3;
 		// End
+		b_check[7] = 0;
+		b_check[6] = 69;
 		MotorDriveFlag = 1;
 	}
 
-	float PosNow = QEIdata.TotalPos - StartTotalPos;
+	PosNow = QEIdata.TotalPos - StartTotalPos;
+	b_check[2] = fabs(MotorDriveTravelDistance-PosNow);
 
-	if((MotorDriveTravelDistance-PosNow) > 0.1 || ((MotorDriveTravelDistance-PosNow) < -0.1)){
+
+	if(fabs(MotorDriveTravelDistance-PosNow) > 0.2){
 		Arrived = 0;
+		b_check[6] = 100;
+
 		b_check[8] = PosNow;
-		int8_t DriveDirection = 1; // direction is 1 if up, -1 if down.
+		DriveDirection = 1; // direction is 1 if up, -1 if down.
 		if (Goal <= StartTotalPos) {
 			DriveDirection = -1;
 			b_check[7] = 1;
 		}
-//		if(MotorDriveTravelDistance<=100){
-//			RealVfeedback = 3;
-//		}
 
 		// Trajectory generator
-		if((DriveDirection == -1)&&(MotorDriveTravelDistance>0)){
-			if ((PosNow <= MotorDriveDampDistance) && (PosNow >= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
-				RealVfeedback = 7;
+		if((DriveDirection == -1)&&(MotorDriveTravelDistance<0)){
+			if(fabs(MotorDriveTravelDistance)<=100){
+				RealVfeedback = 1.3;
+			}else if ((PosNow <= MotorDriveDampDistance) && (PosNow >= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
+				RealVfeedback = 8;
 				b_check[6]= 9;
 			} else if (PosNow > MotorDriveDampDistance) { // Start
 				//RealVfeedback = 1.5;
-				RealVfeedback = ((fabs(PosNow)+1)*7 / MotorDriveTravelDistance)+1;
+				RealVfeedback = ((fabs(PosNow)+1)*8 / MotorDriveTravelDistance)+1;
 				b_check[6]= 10;
 			}  else if (PosNow <= MotorDriveTravelDistance) {  //Hard Stop
 				RealVfeedback = 0;
 				b_check[6]= 11;
 			} else if (PosNow < MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop
 				//RealVfeedback = 1.5;
-				RealVfeedback = ((MotorDriveTravelDistance-PosNow)*7 / MotorDriveTravelDistance)+1;
+				RealVfeedback = ((MotorDriveTravelDistance-PosNow)*8 / MotorDriveTravelDistance)+1;
 				b_check[6]= 12;
 			}
 		}
@@ -1369,7 +1374,7 @@ void MotorDrivePoint() {
 			}
 		}
 
-		PIDVFeedback = Update_pid(&pid_control, MotorDriveTravelDistance-PosNow, 10, 12);
+		PIDVFeedback = Update_pid(&pid_control, MotorDriveTravelDistance-PosNow, 8, 9);
 
 		if (fabs(PIDVFeedback) < fabs(RealVfeedback)) {
 			RealVfeedback = PIDVFeedback;
@@ -1395,20 +1400,21 @@ void MotorDrivePoint() {
 			}
 		}
 
+
+
 		duty_cycle_pid = fabs(RealVfeedback) * 4000 / 12;
+
+
 		if(RealVfeedback == 0){
 			duty_cycle_pid = 0;
 		}
 
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle_pid);
-	}else if((MotorDriveTravelDistance-PosNow) < 0.1 || ((MotorDriveTravelDistance-PosNow) > -0.1)){
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-		Arrived = 1;
-		RealVfeedback = 0;
-		b_check[6] = 6;
-		registerFrame[0x10].U16 = 0;
+
 	}else{
-		Arrived = 2;
+		Arrived += 1;
+		RealVfeedback = 0;
+		b_check[6] = 17;
 	}
 }
 
