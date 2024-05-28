@@ -449,13 +449,8 @@ int main(void)
 					registerFrame[0x01].U16 = 0;
 					registerFrame[0x10].U16 = 16;
 					Arrived = 0;
-<<<<<<< HEAD
 					MotorDriveFlag = 0;
 					Goal = registerFrame[0x30].U16/10;
-
-=======
-					Goal = registerFrame[48].U16/10;
->>>>>>> parent of 2330824 (fix jog and neg x pos)
 				}
 
 				if(registerFrame[0x10].U16 == 16){
@@ -1340,7 +1335,7 @@ void MotorDrivePoint() {
 		}
 
 		// Trajectory generator
-<<<<<<< HEAD
+
 		if((DriveDirection == -1)&&(MotorDriveTravelDistance<0)){
 			if(fabs(MotorDriveTravelDistance)<=100){
 				RealVfeedback = 1.3;
@@ -1351,28 +1346,13 @@ void MotorDrivePoint() {
 				//RealVfeedback = 1.5;
 				RealVfeedback = ((fabs(PosNow)+1)*8 / MotorDriveTravelDistance)+1;
 				b_check[6]= 10;
-=======
-		if((DriveDirection == -1)&&(MotorDriveTravelDistance>0)){
-			if ((PosNow <= MotorDriveDampDistance) && (PosNow >= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
-				RealVfeedback = 7;
-				b_check[6]= 1;
-			} else if (PosNow > MotorDriveDampDistance) { // Start
-				//RealVfeedback = 1.5;
-				RealVfeedback = (fabs(PosNow)+1)*7 / MotorDriveTravelDistance;
-				b_check[6]= 2;
->>>>>>> parent of 2330824 (fix jog and neg x pos)
 			}  else if (PosNow <= MotorDriveTravelDistance) {  //Hard Stop
 				RealVfeedback = 0;
-				b_check[6]= 3;
+				b_check[6]= 11;
 			} else if (PosNow < MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop
 				//RealVfeedback = 1.5;
-<<<<<<< HEAD
 				RealVfeedback = ((MotorDriveTravelDistance-PosNow)*8 / MotorDriveTravelDistance)+1;
 				b_check[6]= 12;
-=======
-				RealVfeedback = (MotorDriveTravelDistance-PosNow)*7 / MotorDriveTravelDistance;
-				b_check[6]= 4;
->>>>>>> parent of 2330824 (fix jog and neg x pos)
 			}
 		}
 		if((DriveDirection == 1)&&(MotorDriveTravelDistance>0)){
@@ -1429,19 +1409,11 @@ void MotorDrivePoint() {
 		}
 
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle_pid);
-<<<<<<< HEAD
 
 	}else{
 		Arrived += 1;
 		RealVfeedback = 0;
 		b_check[6] = 17;
-=======
-	}else{
-		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-		Arrived = 1;
-		RealVfeedback = 0;
-		b_check[6] = 6;
->>>>>>> parent of 2330824 (fix jog and neg x pos)
 	}
 }
 
