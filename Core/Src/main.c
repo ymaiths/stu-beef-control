@@ -316,6 +316,14 @@ int main(void)
 	if((Lo4 == 1) && (flagEmer == 1)){
 		MotorDriveFlag = 1;
 		flagEmer = 0;
+	}else if((flagEmer == 1)&&(bt5 == 0)){
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+		registerFrame[0x10].U16 = 0;
+		flagEmer = 2;
+	}
+	if((bt5 == 0)&&(flagEmer == 2)){
+		registerFrame[0x10].U16 = 2;
+		flagEmer = 0;
 	}
 
 	static uint64_t timestamp = 0;
@@ -438,10 +446,8 @@ int main(void)
 
 			//Set Home Run To limit switch
 			if(registerFrame[0x10].U16 == 2){
-
 				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 800);
 				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1); //End effector Go Down
-
 			}
 
 			//Run Point Mode
