@@ -314,7 +314,12 @@ int main(void)
 	if((Lo4 == 1) && (flagEmer == 1)){
 		MotorDriveFlag = 1;
 		flagEmer = 0;
+	}else if((flagEmer == 1)&&(bt5 == 0)){
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+		registerFrame[0x10].U16 = 0;
+		flagEmer = 2;
 	}
+
 
 	static uint64_t timestamp = 0;
 	int64_t currentTime = Micros();
