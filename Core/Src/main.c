@@ -1334,7 +1334,7 @@ void MotorDrivePoint() {
 //		}
 
 		// Trajectory generator
-		if((DriveDirection == -1)&&(MotorDriveTravelDistance>0)){
+		if((DriveDirection == -1)&&(MotorDriveTravelDistance<0)){
 			if ((PosNow <= MotorDriveDampDistance) && (PosNow >= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
 				RealVfeedback = 7;
 				b_check[6]= 9;
@@ -1359,7 +1359,7 @@ void MotorDrivePoint() {
 				//RealVfeedback = 2;
 				RealVfeedback = ((PosNow+3) * 8/ MotorDriveDampDistance)+1;
 				b_check[6]= 14;
-			} else if (PosNow > MotorDriveTravelDistance) {  //Hard Stop
+			} else if (PosNow >= MotorDriveTravelDistance) {  //Hard Stop
 				RealVfeedback = 0;
 				b_check[6]= 15;
 			} else if (PosNow > MotorDriveTravelDistance - MotorDriveDampDistance) {  //Stop

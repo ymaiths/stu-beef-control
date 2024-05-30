@@ -6225,7 +6225,7 @@ void MotorDrivePoint() {
 //		}
 
 		// Trajectory generator
-		if((DriveDirection == -1)&&(MotorDriveTravelDistance>0)){
+		if((DriveDirection == -1)&&(MotorDriveTravelDistance<0)){
  8003204:	f997 3007 	ldrsb.w	r3, [r7, #7]
  8003208:	f1b3 3fff 	cmp.w	r3, #4294967295
  800320c:	f040 80a9 	bne.w	8003362 <MotorDrivePoint+0x24a>
@@ -6233,7 +6233,7 @@ void MotorDrivePoint() {
  8003212:	edd3 7a00 	vldr	s15, [r3]
  8003216:	eef5 7ac0 	vcmpe.f32	s15, #0.0
  800321a:	eef1 fa10 	vmrs	APSR_nzcv, fpscr
- 800321e:	f340 80a0 	ble.w	8003362 <MotorDrivePoint+0x24a>
+ 800321e:	f140 80a0 	bpl.w	8003362 <MotorDrivePoint+0x24a>
 			if ((PosNow <= MotorDriveDampDistance) && (PosNow >= MotorDriveTravelDistance-MotorDriveDampDistance)) { // Middle
  8003222:	4b84      	ldr	r3, [pc, #528]	@ (8003434 <MotorDrivePoint+0x31c>)
  8003224:	edd3 7a00 	vldr	s15, [r3]
@@ -6446,13 +6446,13 @@ void MotorDrivePoint() {
  800345c:	41400000 	.word	0x41400000
  8003460:	41500000 	.word	0x41500000
  8003464:	41600000 	.word	0x41600000
-			} else if (PosNow > MotorDriveTravelDistance) {  //Hard Stop
+			} else if (PosNow >= MotorDriveTravelDistance) {  //Hard Stop
  8003468:	4b9b      	ldr	r3, [pc, #620]	@ (80036d8 <MotorDrivePoint+0x5c0>)
  800346a:	edd3 7a00 	vldr	s15, [r3]
  800346e:	ed97 7a00 	vldr	s14, [r7]
  8003472:	eeb4 7ae7 	vcmpe.f32	s14, s15
  8003476:	eef1 fa10 	vmrs	APSR_nzcv, fpscr
- 800347a:	dd07      	ble.n	800348c <MotorDrivePoint+0x374>
+ 800347a:	db07      	blt.n	800348c <MotorDrivePoint+0x374>
 				RealVfeedback = 0;
  800347c:	4b97      	ldr	r3, [pc, #604]	@ (80036dc <MotorDrivePoint+0x5c4>)
  800347e:	f04f 0200 	mov.w	r2, #0
