@@ -77,6 +77,9 @@ uint32_t CountGripper;
 uint32_t QEIReadRaw;
 float velodegree;
 float CurrentPos;
+float linearvel[2];
+float linearvelkar[2];
+float linearacckal;
 typedef struct {
 // for record New / Old value to calculate dx / dt
 	uint32_t Position[2];
@@ -84,7 +87,7 @@ typedef struct {
 	float QEIPostion_1turn[2];
 	float QEIAngularVelocity;
 	float Angle;
-	float TotalPos;
+	float TotalPos[2];
 	float QEIRound;
 
 } QEI_StructureTypeDef;
@@ -97,7 +100,7 @@ enum {
 };
 
 //motor
-uint16_t duty_cycle = 1000;
+uint16_t duty_cycle = 4000;
 
 //LogicConv
 uint8_t Lo1 = 0; // foreward leedswitch
@@ -198,6 +201,8 @@ void MotorDrivePoint();
 void RelayDrive();
 void GoPick();
 void GoPlace();
+long kalman_filter(long ADC_Value);
+long kalman_filter_acc(long ADC_Value);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -283,7 +288,7 @@ int main(void)
 
 
 	Modbus_Protocal_Worker();
-	registerFrame[0x11].U16 = QEIdata.TotalPos*10; //ZPos
+	registerFrame[0x11].U16 = QEIdata.TotalPos[NEW]*10; //ZPos
 	//registerFrame[0x11].U16 = b_check[0];
 	registerFrame[0x12].U16 = fabs(linearspeed[NEW]*10); //ZSpeed
 	registerFrame[0x13].U16 = fabs(linearacc); //ZAccel
@@ -317,7 +322,9 @@ int main(void)
 	}else if((flagEmer == 1)&&(bt5 == 0)){
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 		registerFrame[0x10].U16 = 0;
-		flagEmer = 2;
+		registerFrame[0x01].U16 = 0;
+
+		flagEmer = 0;
 	}
 
 
@@ -346,7 +353,7 @@ int main(void)
 		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 	}
 
-	if (Lo3 == 1 && mode !=0) { //joy manual
+	if (Lo3 == 1 && mode !=0){ //joy manual
 			if (bt3 == 0) {
 				HAL_GPIO_WritePin(GPIOC, GPIO_PIN_3, 1);
 				__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle);
@@ -362,7 +369,7 @@ int main(void)
 			}
 
 			relay[3] = 0;
-		} else if (Lo3 == 0 && mode!=0) {
+	} else if (Lo3 == 0 && mode!=0){
 			relay[3] = 1;
 			 if (bt1 == 0){
 				 Z[3] = Z[3] + 1 ;
@@ -417,7 +424,7 @@ int main(void)
 					static uint64_t timestampbt5 = 0;
 					if(HAL_GetTick() > timestampbt5 && flagbt5 == 0) {
 						timestampbt5 = HAL_GetTick() + 1000;
-						ShelvePos[i] = QEIdata.TotalPos;
+						ShelvePos[i] = QEIdata.TotalPos[NEW];
 						i+=1;
 						flagbt5 = 1;
 					}
@@ -1174,7 +1181,7 @@ void QEIEncoderPosVel_Update() {
 	}
 
 
-	QEIdata.TotalPos = (QEIdata.QEIRound * 14) + QEIdata.QEIPostion_1turn[NEW] * 14 / 800; //linear pos in mm uint
+	QEIdata.TotalPos[NEW] = ((QEIdata.QEIRound * 14) + QEIdata.QEIPostion_1turn[NEW] * 14 / 800); //linear pos in mm uint
 
 			//calculate dt
 	float diffTime = (QEIdata.TimeStamp[NEW] - QEIdata.TimeStamp[OLD])
@@ -1186,10 +1193,24 @@ void QEIEncoderPosVel_Update() {
 	velodegree = (velodegree * 60) / 800;
 	linearspeed[NEW] = velodegree * 14 / 60.0;
 
+	float diffPos = QEIdata.TotalPos[NEW] - QEIdata.TotalPos[OLD];
+	if(((diffPos/diffTime)>-800)&&((diffPos/diffTime)<800)&&((diffPos/diffTime)!=0)){
+		linearvel[NEW] = (diffPos/diffTime)*1.27;
+		linearvelkar[NEW] = kalman_filter(linearvel[NEW]);
+	}else if(fabs(QEIdata.TotalPos[NEW] - QEIdata.TotalPos[OLD])<1){
+		linearvel[NEW] = 0;
+		linearvelkar[NEW] = kalman_filter(linearvel[NEW]);
+	}
 
-	float diffVel = linearspeed[NEW] - linearspeed[OLD];
-	linearacc = diffVel/diffTime;
+	float diffVel = linearvelkar[NEW] - linearvelkar[OLD];
+	linearacc = (diffVel/diffTime)*0.8;
+	linearacckal = kalman_filter_acc(linearacc);
+
 	//store value for next loop
+
+	linearvelkar[OLD] = linearvelkar[NEW];
+	linearvel[OLD] = linearvel[NEW];
+	QEIdata.TotalPos[OLD] = QEIdata.TotalPos[NEW];
 	QEIdata.Position[OLD] = QEIdata.Position[NEW];
 	QEIdata.TimeStamp[OLD] = QEIdata.TimeStamp[NEW];
 	QEIdata.QEIPostion_1turn[OLD] = QEIdata.QEIPostion_1turn[NEW];
@@ -1220,14 +1241,14 @@ void ReadButton() {
 void MotorDrive() {
 	if (MotorDriveFlag == 0) {
 		// Start: This box of code run only one time.
-		StartTotalPos = QEIdata.TotalPos;
-		MotorDriveTravelDistance = Goal - QEIdata.TotalPos;
+		StartTotalPos = QEIdata.TotalPos[NEW];
+		MotorDriveTravelDistance = Goal - QEIdata.TotalPos[NEW];
 		MotorDriveDampDistance = MotorDriveTravelDistance * 0.2;
 		// End
 		MotorDriveFlag = 1;
 	}
 
-	float PosNow = QEIdata.TotalPos - StartTotalPos;
+	float PosNow = QEIdata.TotalPos[NEW] - StartTotalPos;
 
 	if((MotorDriveTravelDistance-PosNow) > 0.1 || ((MotorDriveTravelDistance-PosNow) < -0.1)){
 		Arrived = 0;
@@ -1317,14 +1338,14 @@ void MotorDrive() {
 void MotorDrivePoint() {
 	if (MotorDriveFlag == 0) {
 		// Start: This box of code run only one time.
-		StartTotalPos = QEIdata.TotalPos;
-		MotorDriveTravelDistance = Goal - QEIdata.TotalPos;
-		MotorDriveDampDistance = MotorDriveTravelDistance * 0.4;
+		StartTotalPos = QEIdata.TotalPos[NEW];
+		MotorDriveTravelDistance = Goal - QEIdata.TotalPos[NEW];
+		MotorDriveDampDistance = MotorDriveTravelDistance * 0.3;
 		// End
 		MotorDriveFlag = 1;
 	}
 
-	float PosNow = QEIdata.TotalPos - StartTotalPos;
+	float PosNow = QEIdata.TotalPos[NEW] - StartTotalPos;
 
 	if((MotorDriveTravelDistance-PosNow) > 0.1 || ((MotorDriveTravelDistance-PosNow) < -0.1)){
 		Arrived = 0;
@@ -1429,6 +1450,70 @@ void ReadLimit(){
 
 	LimitBottom = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_7);//bottom
 	LimitTop = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_6);//top
+}
+
+long kalman_filter(long ADC_Value)
+{
+    float x_k1_k1,x_k_k1;
+    static float ADC_OLD_Value;
+    float Z_k;
+    static float P_k1_k1;
+
+    static float Q = 0.0001;//Q: Regulation noise, Q increases, dynamic response becomes faster, and convergence stability becomes worse
+    static float R = 10; //R: Test noise, R increases, dynamic response becomes slower, convergence stability becomes better
+    static float Kg = 0;
+    static float P_k_k1 = 1;
+
+    float kalman_adc;
+    static float kalman_adc_old=0;
+    Z_k = ADC_Value;
+    x_k1_k1 = kalman_adc_old;
+
+    x_k_k1 = x_k1_k1;
+    P_k_k1 = P_k1_k1 + Q;
+
+    Kg = P_k_k1/(P_k_k1 + R);
+
+    kalman_adc = x_k_k1 + Kg * (Z_k - kalman_adc_old);
+    P_k1_k1 = (1 - Kg)*P_k_k1;
+    P_k_k1 = P_k1_k1;
+
+    ADC_OLD_Value = ADC_Value;
+    kalman_adc_old = kalman_adc;
+
+    return kalman_adc;
+}
+
+long kalman_filter_acc(long ADC_Value)
+{
+    float x_k1_k1,x_k_k1;
+    static float ADC_OLD_Value;
+    float Z_k;
+    static float P_k1_k1;
+
+    static float Q = 0.0001;//Q: Regulation noise, Q increases, dynamic response becomes faster, and convergence stability becomes worse
+    static float R = 1000; //R: Test noise, R increases, dynamic response becomes slower, convergence stability becomes better
+    static float Kg = 0;
+    static float P_k_k1 = 1;
+
+    float kalman_adc;
+    static float kalman_adc_old=0;
+    Z_k = ADC_Value;
+    x_k1_k1 = kalman_adc_old;
+
+    x_k_k1 = x_k1_k1;
+    P_k_k1 = P_k1_k1 + Q;
+
+    Kg = P_k_k1/(P_k_k1 + R);
+
+    kalman_adc = x_k_k1 + Kg * (Z_k - kalman_adc_old);
+    P_k1_k1 = (1 - Kg)*P_k_k1;
+    P_k_k1 = P_k1_k1;
+
+    ADC_OLD_Value = ADC_Value;
+    kalman_adc_old = kalman_adc;
+
+    return kalman_adc;
 }
 /* USER CODE END 4 */
 
