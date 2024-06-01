@@ -100,7 +100,7 @@ enum {
 };
 
 //motor
-uint16_t duty_cycle = 4000;
+uint16_t duty_cycle = 1000;
 
 //LogicConv
 uint8_t Lo1 = 0; // foreward leedswitch
@@ -315,8 +315,13 @@ int main(void)
 		relay[1] = 0;
 		relay[2] = 0;
 		flagEmer = 1;
+		__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+		registerFrame[0x10].U16 = 0;
+		registerFrame[0x01].U16 = 0;
+
 	}
 	if((Lo4 == 1) && (flagEmer == 1)){
+
 		MotorDriveFlag = 1;
 		flagEmer = 0;
 	}else if((flagEmer == 1)&&(bt5 == 0)){
@@ -1195,7 +1200,7 @@ void QEIEncoderPosVel_Update() {
 
 	float diffPos = QEIdata.TotalPos[NEW] - QEIdata.TotalPos[OLD];
 	if(((diffPos/diffTime)>-800)&&((diffPos/diffTime)<800)&&((diffPos/diffTime)!=0)){
-		linearvel[NEW] = (diffPos/diffTime)*1.27;
+		linearvel[NEW] = (diffPos/diffTime)*1.4;
 		linearvelkar[NEW] = kalman_filter(linearvel[NEW]);
 	}else if(fabs(QEIdata.TotalPos[NEW] - QEIdata.TotalPos[OLD])<1){
 		linearvel[NEW] = 0;
@@ -1203,7 +1208,7 @@ void QEIEncoderPosVel_Update() {
 	}
 
 	float diffVel = linearvelkar[NEW] - linearvelkar[OLD];
-	linearacc = (diffVel/diffTime)*0.8;
+	linearacc = (diffVel/diffTime)*0.6;
 	linearacckal = kalman_filter_acc(linearacc);
 
 	//store value for next loop
@@ -1313,11 +1318,11 @@ void MotorDrive() {
 			b_check[9]= 5;
 		}
 
-		if(fabs(RealVfeedback) < 1.6  && RealVfeedback!=0){
+		if(fabs(RealVfeedback) < 1.8  && RealVfeedback!=0){
 			if (DriveDirection == -1) {
-				RealVfeedback = 1.25;
+				RealVfeedback = 1.3;
 			} else {
-				RealVfeedback = 1.6;
+				RealVfeedback = 1.8;
 			}
 		}
 
